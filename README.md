@@ -2,7 +2,7 @@
 
 A Java 21 console application for monitoring multiple directories on disk and cataloging, filtering, and reporting on multimedia files (audio `.mp3`, `.wav` and images `.jpg`, `.png`). Monitored directory paths are persisted in `locations.txt`, all working data is managed in memory inside collections of custom domain objects (`List<MonitoredDirectory>`, `List<MultimediaFile>`, `Map<MediaType, List<MultimediaFile>>`) and 1D/2D primitive arrays (`int[]`, `long[]`, `long[][]`), and statistics/snapshots are saved to text (`reports/multimedia-report.txt`) and binary (`data/catalog.bin`) files.
 
-Status: `project-foundation`, `location-management`, and `multimedia-scanner-filter` complete (build/lint/test/run toolchain, domain model, exception hierarchy, `locations.txt` persistence, in-memory monitored directory catalog, recursive multimedia scanner, and catalog file filtering/searching). The roadmap is in [`docs/ROADMAP.md`](docs/ROADMAP.md) and the design is documented in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+Status: `project-foundation`, `location-management`, `multimedia-scanner-filter`, and `statistics-and-reports` complete (build/lint/test/run toolchain, domain model, exception hierarchy, `locations.txt` persistence, in-memory monitored directory catalog, recursive multimedia scanner, catalog file filtering/searching, 1D/2D primitive array statistics calculator, UTF-8 text report exporter, and binary catalog snapshot storage). The roadmap is in [`docs/ROADMAP.md`](docs/ROADMAP.md) and the design is documented in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Features
 
@@ -16,6 +16,8 @@ Status: `project-foundation`, `location-management`, and `multimedia-scanner-fil
 | In-memory directory catalog (`List<MonitoredDirectory>`, `Set<Path>`), startup status classification (`ACCESSIBLE`, `MISSING`, `INACCESSIBLE`), validated addition, non-destructive reference removal, and exit persistence | `ro.ase.multimedia.service.MultimediaCatalog` | `location-management` |
 | Recursive multimedia directory scanner (`Files.walkFileTree`) for `.mp3`, `.wav`, `.jpg`, `.png` with non-fatal traversal warnings and no symlink following | `ro.ase.multimedia.service.MultimediaScanner` | `multimedia-scanner-filter` |
 | In-memory media collections (`List<MultimediaFile>`, `Map<MediaType, List<MultimediaFile>>`), automatic rescanning with overlapping directory deduplication, and filtering/searching by `MediaType`, extension, or filename substring | `ro.ase.multimedia.service.MultimediaCatalog` | `multimedia-scanner-filter` |
+| 1D (`int[] countsByExtension`, `long[] bytesByExtension`) and 2D (`long[][] directoryExtensionMatrix`) primitive array statistics calculation with defensive deep copies | `ro.ase.multimedia.service.StatisticsCalculator` | `statistics-and-reports` |
+| Atomic UTF-8 text report export (`reports/multimedia-report.txt`) and binary catalog snapshot save/restore (`data/catalog.bin`) integrated into catalog lifecycle and exit persistence | `ro.ase.multimedia.storage.ReportExporter`, `ro.ase.multimedia.storage.BinaryCatalogStorage`, `ro.ase.multimedia.service.MultimediaCatalog` | `statistics-and-reports` |
 
 ## Requirements
 
