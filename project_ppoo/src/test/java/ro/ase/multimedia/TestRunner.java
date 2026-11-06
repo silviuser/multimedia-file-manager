@@ -20,6 +20,7 @@ import ro.ase.multimedia.model.MonitoredDirectory;
 import ro.ase.multimedia.model.MultimediaFile;
 import ro.ase.multimedia.service.MultimediaCatalog;
 import ro.ase.multimedia.service.MultimediaScanner;
+import ro.ase.multimedia.service.StatisticsCalculator;
 import ro.ase.multimedia.storage.LocationRepository;
 
 /**
@@ -81,6 +82,10 @@ public final class TestRunner {
                 TestRunner::catalog_filterByExtensionMatchesCaseInsensitivelyWithOrWithoutDotAndRejectsInvalid);
         runTest("T21 catalog_searchByNameFindsCaseInsensitiveSubstringMatchesAndRejectsBlankQuery",
                 TestRunner::catalog_searchByNameFindsCaseInsensitiveSubstringMatchesAndRejectsBlankQuery);
+        runTest("T22 statisticsCalculator_computes1DAnd2DPrimitiveArraysAndEnforcesDefensiveCopies",
+                TestRunner::statisticsCalculator_computes1DAnd2DPrimitiveArraysAndEnforcesDefensiveCopies);
+        runTest("T23 statisticsCalculator_handlesEmptyInputsAndRejectsNullArguments",
+                TestRunner::statisticsCalculator_handlesEmptyInputsAndRejectsNullArguments);
 
         System.out.printf("Tests complete: %d passed, %d failed.%n", passed, failed);
         if (failed > 0) {
@@ -715,5 +720,78 @@ public final class TestRunner {
         } finally {
             deleteRecursively(tempRoot);
         }
+    }
+
+    private static void statisticsCalculator_computes1DAnd2DPrimitiveArraysAndEnforcesDefensiveCopies() {
+        Path dirA = Path.of("media", "dirA").toAbsolutePath().normalize();
+        Path dirB = Path.of("media", "dirB").toAbsolutePath().normalize();
+        List<MonitoredDirectory> dirs = List.of(
+                new MonitoredDirectory(dirA, DirectoryStatus.ACCESSIBLE, "2026-11-06T10:00:00Z"),
+                new MonitoredDirectory(dirB, DirectoryStatus.ACCESSIBLE, "2026-11-06T10:01:00Z")
+        );
+
+        List<MultimediaFile> files = List.of(
+                new MultimediaFile("a.mp3", ".mp3", MediaType.AUDIO, 100L, dirA, dirA.resolve("a.mp3")),
+                new MultimediaFile("b.mp3", ".mp3", MediaType.AUDIO, 250L, dirA, dirA.resolve("b.mp3")),
+                new MultimediaFile("c.wav", ".wav", MediaType.AUDIO, 500L, dirB, dirB.resolve("c.wav")),
+                new MultimediaFile("d.jpg", ".jpg", MediaType.IMAGE, 1200L, dirA, dirA.resolve("d.jpg")),
+                new MultimediaFile("e.png", ".png", MediaType.IMAGE, 300L, dirB, dirB.resolve("e.png"))
+        );
+
+        StatisticsCalculator calculator = new StatisticsCalculator();
+        StatisticsCalculator.StatisticsSnapshot snapshot = calculator.calculate(dirs, files);
+
+        assertEquals(5, snapshot.getTotalFiles(), "Total files is 5");
+        assertEquals(2350L, snapshot.getTotalBytes(), "Total bytes is 2350");
+
+        int[] counts = snapshot.getCountsByExtension();
+        assertEquals(2, counts[0], "2 .mp3 files");
+        assertEquals(1, counts[1], "1 .wav file");
+        assertEquals(1, counts[2], "1 .jpg file");
+        assertEquals(1, counts[3], "1 .png file");
+
+        long[] bytes = snapshot.getBytesByExtension();
+        assertEquals(350L, bytes[0], "350 bytes for .mp3");
+        assertEquals(500L, bytes[1], "500 bytes for .wav");
+        assertEquals(1200L, bytes[2], "1200 bytes for .jpg");
+        assertEquals(300L, bytes[3], "300 bytes for .png");
+
+        long[][] matrix = snapshot.getDirectoryExtensionMatrix();
+        assertEquals(2, matrix.length, "2 directory rows in 2D matrix");
+        assertEquals(2L, matrix[0][0], "dirA has 2 .mp3");
+        assertEquals(0L, matrix[0][1], "dirA has 0 .wav");
+        assertEquals(1L, matrix[0][2], "dirA has 1 .jpg");
+        assertEquals(0L, matrix[0][3], "dirA has 0 .png");
+        assertEquals(0L, matrix[1][0], "dirB has 0 .mp3");
+        assertEquals(1L, matrix[1][1], "dirB has 1 .wav");
+        assertEquals(0L, matrix[1][2], "dirB has 0 .jpg");
+        assertEquals(1L, matrix[1][3], "dirB has 1 .png");
+
+        counts[0] = 999;
+        bytes[0] = 999999L;
+        matrix[0][0] = 999L;
+        assertEquals(2, snapshot.getCountsByExtension()[0], "Defensive copy protects countsByExtension");
+        assertEquals(350L, snapshot.getBytesByExtension()[0], "Defensive copy protects bytesByExtension");
+        assertEquals(2L, snapshot.getDirectoryExtensionMatrix()[0][0], "Defensive copy protects 2D matrix");
+    }
+
+    private static void statisticsCalculator_handlesEmptyInputsAndRejectsNullArguments() {
+        StatisticsCalculator calculator = new StatisticsCalculator();
+        StatisticsCalculator.StatisticsSnapshot empty = calculator.calculate(List.of(), List.of());
+
+        assertEquals(0, empty.getTotalFiles(), "0 total files when empty");
+        assertEquals(0L, empty.getTotalBytes(), "0 total bytes when empty");
+        assertEquals(4, empty.getCountsByExtension().length, "4 extension slots even when empty");
+        assertEquals(0, empty.getDirectoryExtensionMatrix().length, "0 rows when directories list is empty");
+
+        assertThrows(IllegalArgumentException.class,
+                () -> calculator.calculate(null, List.of()),
+                "Null directories list rejected");
+        assertThrows(IllegalArgumentException.class,
+                () -> calculator.calculate(List.of(), null),
+                "Null files list rejected");
+        assertThrows(IllegalArgumentException.class,
+                () -> new StatisticsCalculator.StatisticsSnapshot(new int[2], new long[4], new long[0][4]),
+                "Invalid countsByExtension length rejected");
     }
 }
