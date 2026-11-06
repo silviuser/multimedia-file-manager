@@ -21,6 +21,7 @@ import ro.ase.multimedia.model.MultimediaFile;
 import ro.ase.multimedia.service.MultimediaCatalog;
 import ro.ase.multimedia.service.MultimediaScanner;
 import ro.ase.multimedia.service.StatisticsCalculator;
+import ro.ase.multimedia.storage.BinaryCatalogStorage;
 import ro.ase.multimedia.storage.LocationRepository;
 import ro.ase.multimedia.storage.ReportExporter;
 
@@ -91,6 +92,10 @@ public final class TestRunner {
                 TestRunner::reportExporter_writesFormattedUtf8ReportAtomicallyAndCleansUpTempFile);
         runTest("T25 reportExporter_throwsStorageOperationExceptionOnWriteFailureAndRejectsNulls",
                 TestRunner::reportExporter_throwsStorageOperationExceptionOnWriteFailureAndRejectsNulls);
+        runTest("T26 binaryCatalogStorage_savesAndLoadsRoundTripSnapshotAndReturnsEmptyWhenMissing",
+                TestRunner::binaryCatalogStorage_savesAndLoadsRoundTripSnapshotAndReturnsEmptyWhenMissing);
+        runTest("T27 binaryCatalogStorage_throwsStorageOperationExceptionOnCorruptedFileOrWriteFailure",
+                TestRunner::binaryCatalogStorage_throwsStorageOperationExceptionOnCorruptedFileOrWriteFailure);
 
         System.out.printf("Tests complete: %d passed, %d failed.%n", passed, failed);
         if (failed > 0) {
@@ -869,6 +874,93 @@ public final class TestRunner {
             assertThrows(IllegalArgumentException.class,
                     () -> failingExporter.export(List.of(), List.of(), null),
                     "Null statistics rejected");
+        } catch (IOException ex) {
+            throw new RuntimeException(ex);
+        } finally {
+            deleteRecursively(tempRoot);
+        }
+    }
+
+    private static void binaryCatalogStorage_savesAndLoadsRoundTripSnapshotAndReturnsEmptyWhenMissing() {
+        Path tempRoot = null;
+        try {
+            tempRoot = Files.createTempDirectory("multimedia-test-t26-");
+            Path binaryFile = tempRoot.resolve("data").resolve("catalog.bin");
+            BinaryCatalogStorage storage = new BinaryCatalogStorage(binaryFile);
+
+            assertEquals(binaryFile.toAbsolutePath().normalize(), storage.getBinaryFile(), "Normalized binaryFile");
+            assertTrue(storage.load().isEmpty(), "Missing catalog.bin returns Optional.empty()");
+
+            Path dirA = tempRoot.resolve("dirA").toAbsolutePath().normalize();
+            Path dirB = tempRoot.resolve("dirB").toAbsolutePath().normalize();
+            List<MonitoredDirectory> dirs = List.of(
+                    new MonitoredDirectory(dirA, DirectoryStatus.ACCESSIBLE, "2026-11-06T12:00:00Z"),
+                    new MonitoredDirectory(dirB, DirectoryStatus.MISSING, "2026-11-06T12:05:00Z")
+            );
+            List<MultimediaFile> files = List.of(
+                    new MultimediaFile("alpha.mp3", ".mp3", MediaType.AUDIO, 4096L, dirA, dirA.resolve("alpha.mp3")),
+                    new MultimediaFile("beta.jpg", ".jpg", MediaType.IMAGE, 8192L, dirA, dirA.resolve("beta.jpg"))
+            );
+            StatisticsCalculator.StatisticsSnapshot stats = new StatisticsCalculator().calculate(dirs, files);
+
+            storage.save(dirs, files, stats);
+            assertTrue(Files.exists(binaryFile), "catalog.bin created after save");
+            assertTrue(!Files.exists(binaryFile.resolveSibling("catalog.bin.tmp")), "No leftover .tmp file");
+
+            BinaryCatalogStorage.CatalogSnapshot restored = storage.load().orElseThrow();
+            assertEquals(2, restored.directories().size(), "2 directories restored");
+            assertEquals(dirA, restored.directories().get(0).getPath(), "Restored dirA path");
+            assertEquals(DirectoryStatus.MISSING, restored.directories().get(1).getStatus(), "Restored dirB status");
+            assertEquals(2, restored.files().size(), "2 files restored");
+            assertEquals("alpha.mp3", restored.files().get(0).getName(), "Restored alpha.mp3");
+            assertEquals(4096L, restored.files().get(0).getSizeBytes(), "Restored alpha.mp3 size");
+
+            StatisticsCalculator.StatisticsSnapshot restoredStats = restored.statistics();
+            assertEquals(2, restoredStats.getTotalFiles(), "Restored totalFiles is 2");
+            assertEquals(12288L, restoredStats.getTotalBytes(), "Restored totalBytes is 12288");
+            assertEquals(1, restoredStats.getCountsByExtension()[0], "Restored 1D .mp3 count");
+            assertEquals(1, restoredStats.getCountsByExtension()[2], "Restored 1D .jpg count");
+            assertEquals(1L, restoredStats.getDirectoryExtensionMatrix()[0][0], "Restored 2D matrix [0][0]");
+            assertEquals(1L, restoredStats.getDirectoryExtensionMatrix()[0][2], "Restored 2D matrix [0][2]");
+        } catch (IOException ex) {
+            throw new RuntimeException(ex);
+        } finally {
+            deleteRecursively(tempRoot);
+        }
+    }
+
+    private static void binaryCatalogStorage_throwsStorageOperationExceptionOnCorruptedFileOrWriteFailure() {
+        Path tempRoot = null;
+        try {
+            tempRoot = Files.createTempDirectory("multimedia-test-t27-");
+            Path corruptedFile = tempRoot.resolve("corrupted.bin");
+            Files.writeString(corruptedFile, "NOT_A_VALID_BINARY_CATALOG", StandardCharsets.UTF_8);
+
+            BinaryCatalogStorage corruptedStorage = new BinaryCatalogStorage(corruptedFile);
+            assertThrows(StorageOperationException.class,
+                    corruptedStorage::load,
+                    "Corrupted magic header throws StorageOperationException");
+
+            Path truncatedFile = tempRoot.resolve("truncated.bin");
+            Files.write(truncatedFile, new byte[]{0x4D, 0x46});
+            BinaryCatalogStorage truncatedStorage = new BinaryCatalogStorage(truncatedFile);
+            assertThrows(StorageOperationException.class,
+                    truncatedStorage::load,
+                    "Truncated binary stream throws StorageOperationException");
+
+            Path dirAsBinary = Files.createDirectory(tempRoot.resolve("dir-as-bin"));
+            BinaryCatalogStorage failingStorage = new BinaryCatalogStorage(dirAsBinary);
+            StatisticsCalculator.StatisticsSnapshot emptyStats =
+                    new StatisticsCalculator().calculate(List.of(), List.of());
+
+            assertThrows(StorageOperationException.class,
+                    () -> failingStorage.save(List.of(), List.of(), emptyStats),
+                    "Saving over a directory throws StorageOperationException");
+            assertTrue(!Files.exists(dirAsBinary.resolveSibling("dir-as-bin.tmp")),
+                    "Failed binary save cleans up temporary sibling file");
+            assertThrows(IllegalArgumentException.class,
+                    () -> new BinaryCatalogStorage(null),
+                    "Null binaryFile rejected");
         } catch (IOException ex) {
             throw new RuntimeException(ex);
         } finally {
