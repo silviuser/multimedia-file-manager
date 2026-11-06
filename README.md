@@ -39,10 +39,69 @@ Status: `project-foundation`, `location-management`, `multimedia-scanner-filter`
 Sources reside in `project_ppoo/src/main/java` and `project_ppoo/src/test/java` and compile into `project_ppoo/out/{main,test}`:
 
 ```bash
-./scripts/build.sh   # compile main and test sources
-./scripts/lint.sh    # javac -Xlint:all -Werror and javadoc -Xdoclint:all -Werror check
-./scripts/test.sh    # run automated test suite (ro.ase.multimedia.TestRunner)
-./scripts/run.sh     # start the console application (ro.ase.multimedia.Main)
+./scripts/build.sh    # compile main and test sources
+./scripts/lint.sh     # javac -Xlint:all -Werror and javadoc -Xdoclint:all -Werror check
+./scripts/test.sh     # run automated test suite (ro.ase.multimedia.TestRunner)
+./scripts/javadoc.sh  # generate HTML JavaDoc into docs/javadoc/index.html
+./scripts/run.sh      # start the console application (ro.ase.multimedia.Main)
+```
+
+## Manual Console Verification
+
+You can run a complete, repeatable end-to-end console walkthrough (`TEST-7`, `G6`, `G7`) that exercises every menu option (`1`–`6` and `0`) and inspects all persistence files (`locations.txt`, `reports/multimedia-report.txt`, and `data/catalog.bin`):
+
+```bash
+# 1. Create temporary sample directories and multimedia files (.mp3, .wav, .jpg, .png)
+rm -rf /tmp/mfm-demo
+mkdir -p /tmp/mfm-demo/music /tmp/mfm-demo/photos
+printf 'sample-mp3-audio-content' > /tmp/mfm-demo/music/summer_song.mp3
+printf 'sample-wav-audio' > /tmp/mfm-demo/music/alert.wav
+printf 'sample-jpg-image-content-bytes' > /tmp/mfm-demo/photos/vacation.jpg
+printf 'sample-png-image' > /tmp/mfm-demo/photos/cover_song.png
+
+# 2. Launch the interactive application and exercise options 1, 2, 3, 4, 5, 6, and 0:
+#    - 1: View monitored directories (initially empty)
+#    - 2: Add /tmp/mfm-demo/music and /tmp/mfm-demo/photos
+#    - 1: View indexed monitored directories with status ACCESSIBLE and file counts
+#    - 4: Display all discovered multimedia files
+#    - 5 -> 1 -> AUDIO: Filter by MediaType (AUDIO / IMAGE)
+#    - 5 -> 2 -> .png: Filter by file extension (.mp3, .wav, .jpg, .png)
+#    - 5 -> 3 -> song: Search by filename keyword
+#    - 6: View 1D/2D primitive array statistics and export report & binary snapshot
+#    - 3 -> 1: Remove directory #1 (/tmp/mfm-demo/music) reference while keeping disk files intact
+#    - 0: Save state to locations.txt & data/catalog.bin and exit
+./scripts/run.sh << 'EOF'
+1
+2
+/tmp/mfm-demo/music
+2
+/tmp/mfm-demo/photos
+1
+4
+5
+1
+AUDIO
+5
+2
+.png
+5
+3
+song
+6
+3
+1
+1
+0
+EOF
+
+# 3. Inspect persisted files and verify removed directory files remain intact on disk (S3)
+cat project_ppoo/locations.txt
+cat project_ppoo/reports/multimedia-report.txt
+ls -lh project_ppoo/data/catalog.bin
+ls -la /tmp/mfm-demo/music
+
+# 4. Clean up temporary demo files and runtime persistence artifacts
+rm -rf /tmp/mfm-demo project_ppoo/locations.txt project_ppoo/data project_ppoo/reports
 ```
 
 ## Development workflow
