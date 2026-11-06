@@ -4,11 +4,15 @@ import java.io.InputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Locale;
 import java.util.Scanner;
 import ro.ase.multimedia.exception.LocationNotFoundException;
 import ro.ase.multimedia.exception.MultimediaException;
+import ro.ase.multimedia.model.MediaType;
 import ro.ase.multimedia.model.MonitoredDirectory;
+import ro.ase.multimedia.model.MultimediaFile;
 import ro.ase.multimedia.service.MultimediaCatalog;
+import ro.ase.multimedia.service.StatisticsCalculator;
 
 /**
  * Interactive console user interface driving the Multimedia File Manager lifecycle,
@@ -165,11 +169,148 @@ public final class ConsoleMenu {
     }
 
     private void handleDisplayAllFiles() {
+        printFileList(catalog.getMultimediaFiles(), "No multimedia files found in monitored directories.");
     }
 
     private void handleFilterOrSearchFiles() {
+        out.println("Filter / Search Options:");
+        out.println("1 - Filter by MediaType (AUDIO / IMAGE)");
+        out.println("2 - Filter by extension (.mp3 / .wav / .jpg / .png)");
+        out.println("3 - Search by filename keyword");
+        out.print("Select filter option (1-3): ");
+        if (!scanner.hasNextLine()) {
+            running = false;
+            return;
+        }
+        String subOptionRaw = scanner.nextLine().trim();
+        int subOption;
+        try {
+            subOption = Integer.parseInt(subOptionRaw);
+        } catch (NumberFormatException ex) {
+            throw new IllegalArgumentException(
+                    "Invalid filter option: '" + subOptionRaw + "'. Please enter 1, 2, or 3.", ex);
+        }
+        if (subOption < 1 || subOption > 3) {
+            throw new IllegalArgumentException("Invalid filter option: " + subOption + ". Choose 1-3.");
+        }
+
+        List<MultimediaFile> matches = switch (subOption) {
+            case 1 -> {
+                out.print("Enter media type (AUDIO or IMAGE): ");
+                if (!scanner.hasNextLine()) {
+                    running = false;
+                    yield List.of();
+                }
+                String rawType = scanner.nextLine().trim();
+                MediaType mediaType = parseMediaType(rawType);
+                yield catalog.filterByMediaType(mediaType);
+            }
+            case 2 -> {
+                out.print("Enter file extension (.mp3, .wav, .jpg, .png): ");
+                if (!scanner.hasNextLine()) {
+                    running = false;
+                    yield List.of();
+                }
+                String rawExt = scanner.nextLine();
+                yield catalog.filterByExtension(rawExt);
+            }
+            default -> {
+                out.print("Enter filename keyword: ");
+                if (!scanner.hasNextLine()) {
+                    running = false;
+                    yield List.of();
+                }
+                String keyword = scanner.nextLine();
+                yield catalog.searchByName(keyword);
+            }
+        };
+
+        if (running) {
+            printFileList(matches, "No multimedia files matched the filter criteria.");
+        }
     }
 
     private void handleViewStatisticsAndExport() {
+        List<MonitoredDirectory> dirs = catalog.getMonitoredDirectories();
+        StatisticsCalculator.StatisticsSnapshot stats = catalog.getStatistics();
+
+        out.println("[Summary Totals]");
+        out.println("Monitored Directories: " + dirs.size());
+        out.println("Total Multimedia Files: " + stats.getTotalFiles());
+        out.println("Total Size: " + formatSize(stats.getTotalBytes()));
+        out.println();
+
+        out.println("[1D Extension Statistics]");
+        int[] counts = stats.getCountsByExtension();
+        long[] bytes = stats.getBytesByExtension();
+        for (int i = 0; i < MediaType.SUPPORTED_EXTENSIONS.size(); i++) {
+            String ext = MediaType.SUPPORTED_EXTENSIONS.get(i);
+            out.println(ext + " -> Count: " + counts[i] + " | Bytes: " + bytes[i]
+                    + " (" + formatSize(bytes[i]) + ")");
+        }
+        out.println();
+
+        out.println("[2D Directory-by-Extension Matrix]");
+        StringBuilder header = new StringBuilder("Directory");
+        for (String ext : MediaType.SUPPORTED_EXTENSIONS) {
+            header.append(" | ").append(ext);
+        }
+        out.println(header);
+
+        long[][] matrix = stats.getDirectoryExtensionMatrix();
+        if (dirs.isEmpty() || matrix.length == 0) {
+            out.println("(none)");
+        } else {
+            int rows = Math.min(dirs.size(), matrix.length);
+            for (int r = 0; r < rows; r++) {
+                StringBuilder row = new StringBuilder(dirs.get(r).getPath().toString());
+                for (int c = 0; c < MediaType.SUPPORTED_EXTENSIONS.size(); c++) {
+                    row.append(" | ").append(matrix[r][c]);
+                }
+                out.println(row);
+            }
+        }
+
+        catalog.exportReport();
+        catalog.saveBinarySnapshot();
+        out.println("Exported text report and saved binary catalog snapshot.");
+    }
+
+    private void printFileList(List<MultimediaFile> files, String emptyMessage) {
+        if (files.isEmpty()) {
+            out.println(emptyMessage);
+            return;
+        }
+        out.println("Multimedia Files (" + files.size() + "):");
+        for (int i = 0; i < files.size(); i++) {
+            MultimediaFile file = files.get(i);
+            out.println("[" + (i + 1) + "] " + file.getName()
+                    + " | Ext: " + file.getExtension()
+                    + " | Type: " + file.getMediaType()
+                    + " | Size: " + formatSize(file.getSizeBytes())
+                    + " | Location: " + file.getDirectoryPath());
+        }
+    }
+
+    private static MediaType parseMediaType(String rawType) {
+        if (rawType == null || rawType.isBlank()) {
+            throw new IllegalArgumentException("Media type must not be blank. Use AUDIO or IMAGE.");
+        }
+        return switch (rawType.trim().toUpperCase(Locale.ROOT)) {
+            case "AUDIO" -> MediaType.AUDIO;
+            case "IMAGE" -> MediaType.IMAGE;
+            default -> throw new IllegalArgumentException(
+                    "Unsupported media type: '" + rawType + "'. Use AUDIO or IMAGE.");
+        };
+    }
+
+    private static String formatSize(long sizeBytes) {
+        if (sizeBytes < 1024L) {
+            return sizeBytes + " B (" + sizeBytes + " bytes)";
+        }
+        if (sizeBytes < 1024L * 1024L) {
+            return String.format(Locale.ROOT, "%.2f KB (%d bytes)", sizeBytes / 1024.0, sizeBytes);
+        }
+        return String.format(Locale.ROOT, "%.2f MB (%d bytes)", sizeBytes / (1024.0 * 1024.0), sizeBytes);
     }
 }

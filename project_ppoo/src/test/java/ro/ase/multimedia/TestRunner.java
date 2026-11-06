@@ -106,6 +106,10 @@ public final class TestRunner {
                 TestRunner::consoleMenu_initializesPrintsWarningsAndSavesStateOnZeroOrEofExit);
         runTest("T30 consoleMenu_addsViewsAndRemovesDirectoriesByIndexAndPathKeepingDiskFilesIntact",
                 TestRunner::consoleMenu_addsViewsAndRemovesDirectoriesByIndexAndPathKeepingDiskFilesIntact);
+        runTest("T31 consoleMenu_displaysAllFilesAndFiltersByMediaTypeExtensionAndKeyword",
+                TestRunner::consoleMenu_displaysAllFilesAndFiltersByMediaTypeExtensionAndKeyword);
+        runTest("T32 consoleMenu_views1DAnd2DStatisticsAndExportsReportAndBinarySnapshot",
+                TestRunner::consoleMenu_views1DAnd2DStatisticsAndExportsReportAndBinarySnapshot);
 
         System.out.printf("Tests complete: %d passed, %d failed.%n", passed, failed);
         if (failed > 0) {
@@ -1126,6 +1130,103 @@ public final class TestRunner {
             assertEquals(0, catalog.getMonitoredDirectories().size(), "All directories removed from catalog");
             assertTrue(Files.exists(sampleMp3), "dirA file on disk remains intact (S3)");
             assertTrue(Files.exists(sampleJpg), "dirB file on disk remains intact (S3)");
+        } catch (IOException ex) {
+            throw new RuntimeException(ex);
+        } finally {
+            deleteRecursively(tempRoot);
+        }
+    }
+
+    private static void consoleMenu_displaysAllFilesAndFiltersByMediaTypeExtensionAndKeyword() {
+        Path tempRoot = null;
+        try {
+            tempRoot = Files.createTempDirectory("multimedia-test-t31-");
+            Path locationsFile = tempRoot.resolve("locations.txt");
+            Path mediaDir = Files.createDirectory(tempRoot.resolve("media"));
+            Files.write(mediaDir.resolve("Summer_Song.MP3"), new byte[2048]);
+            Files.write(mediaDir.resolve("alert.wav"), new byte[512]);
+            Files.write(mediaDir.resolve("Summer_Photo.png"), new byte[1024]);
+
+            String commands = String.join("\n",
+                    "4",
+                    "2", mediaDir.toString(),
+                    "4",
+                    "5", "1", "audio",
+                    "5", "2", "PNG",
+                    "5", "3", "summer",
+                    "5", "3", "nonexistent-keyword",
+                    "0") + "\n";
+
+            MultimediaCatalog catalog = new MultimediaCatalog(new LocationRepository(locationsFile));
+            ByteArrayInputStream in = new ByteArrayInputStream(commands.getBytes(StandardCharsets.UTF_8));
+            ByteArrayOutputStream outBuffer = new ByteArrayOutputStream();
+            PrintStream out = new PrintStream(outBuffer, true, StandardCharsets.UTF_8);
+
+            new ConsoleMenu(catalog, in, out).run();
+
+            String output = outBuffer.toString(StandardCharsets.UTF_8);
+            assertTrue(output.contains("No multimedia files found in monitored directories."),
+                    "Prints empty state message before directories are added");
+            assertTrue(output.contains("Multimedia Files (3):"), "Option 4 displays all 3 files");
+            assertTrue(output.contains("Summer_Song.MP3 | Ext: .mp3 | Type: AUDIO | Size: 2.00 KB (2048 bytes)"),
+                    "Formats file entry with name, extension, MediaType, human-readable and byte size");
+            assertTrue(output.contains("alert.wav | Ext: .wav | Type: AUDIO | Size: 512 B (512 bytes)"),
+                    "Formats sub-KB file size");
+            assertTrue(output.contains("Multimedia Files (2):"),
+                    "MediaType AUDIO filter and keyword 'summer' search return 2 files");
+            assertTrue(output.contains("Multimedia Files (1):"),
+                    "Extension 'PNG' filter returns 1 file");
+            assertTrue(output.contains("No multimedia files matched the filter criteria."),
+                    "Unmatched search prints informative message");
+        } catch (IOException ex) {
+            throw new RuntimeException(ex);
+        } finally {
+            deleteRecursively(tempRoot);
+        }
+    }
+
+    private static void consoleMenu_views1DAnd2DStatisticsAndExportsReportAndBinarySnapshot() {
+        Path tempRoot = null;
+        try {
+            tempRoot = Files.createTempDirectory("multimedia-test-t32-");
+            Path locationsFile = tempRoot.resolve("locations.txt");
+            Path reportFile = tempRoot.resolve("reports").resolve("multimedia-report.txt");
+            Path binaryFile = tempRoot.resolve("data").resolve("catalog.bin");
+            Path dirA = Files.createDirectory(tempRoot.resolve("dirA"));
+            Path dirB = Files.createDirectory(tempRoot.resolve("dirB"));
+            Files.write(dirA.resolve("track.mp3"), new byte[1000]);
+            Files.write(dirB.resolve("cover.jpg"), new byte[3000]);
+
+            String commands = String.join("\n",
+                    "2", dirA.toString(),
+                    "2", dirB.toString(),
+                    "6",
+                    "0") + "\n";
+
+            MultimediaCatalog catalog = new MultimediaCatalog(new LocationRepository(locationsFile));
+            ByteArrayInputStream in = new ByteArrayInputStream(commands.getBytes(StandardCharsets.UTF_8));
+            ByteArrayOutputStream outBuffer = new ByteArrayOutputStream();
+            PrintStream out = new PrintStream(outBuffer, true, StandardCharsets.UTF_8);
+
+            new ConsoleMenu(catalog, in, out).run();
+
+            String output = outBuffer.toString(StandardCharsets.UTF_8);
+            assertTrue(output.contains("[Summary Totals]"), "Displays summary totals section");
+            assertTrue(output.contains("Monitored Directories: 2"), "Displays directory count");
+            assertTrue(output.contains("Total Multimedia Files: 2"), "Displays total file count");
+            assertTrue(output.contains("Total Size: 3.91 KB (4000 bytes)"), "Displays formatted total bytes");
+            assertTrue(output.contains("[1D Extension Statistics]"), "Displays 1D primitive array statistics");
+            assertTrue(output.contains(".mp3 -> Count: 1 | Bytes: 1000"), "Displays .mp3 1D entry");
+            assertTrue(output.contains(".jpg -> Count: 1 | Bytes: 3000"), "Displays .jpg 1D entry");
+            assertTrue(output.contains("[2D Directory-by-Extension Matrix]"), "Displays 2D primitive matrix");
+            assertTrue(output.contains(dirA.toAbsolutePath().normalize() + " | 1 | 0 | 0 | 0"),
+                    "Displays dirA row in 2D matrix");
+            assertTrue(output.contains(dirB.toAbsolutePath().normalize() + " | 0 | 0 | 1 | 0"),
+                    "Displays dirB row in 2D matrix");
+            assertTrue(output.contains("Exported text report and saved binary catalog snapshot."),
+                    "Confirms report and binary snapshot export");
+            assertTrue(Files.exists(reportFile), "Option 6 creates multimedia-report.txt");
+            assertTrue(Files.exists(binaryFile), "Option 6 creates catalog.bin");
         } catch (IOException ex) {
             throw new RuntimeException(ex);
         } finally {
