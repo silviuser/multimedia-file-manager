@@ -5,39 +5,65 @@ import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import ro.ase.multimedia.exception.DuplicateLocationException;
 import ro.ase.multimedia.exception.InvalidDirectoryException;
 import ro.ase.multimedia.exception.LocationNotFoundException;
 import ro.ase.multimedia.exception.StorageOperationException;
 import ro.ase.multimedia.model.DirectoryStatus;
+import ro.ase.multimedia.model.MediaType;
 import ro.ase.multimedia.model.MonitoredDirectory;
+import ro.ase.multimedia.model.MultimediaFile;
 import ro.ase.multimedia.storage.LocationRepository;
 
 /**
- * Coordinates the in-memory catalog of monitored directories and synchronizes state with {@link LocationRepository}.
+ * Coordinates the in-memory catalog of monitored directories and discovered multimedia files,
+ * synchronizing directory state with {@link LocationRepository}.
  */
 public final class MultimediaCatalog {
 
-    // TODO(TD-location-management-1): Integrate MultimediaScanner, StatisticsCalculator (1D/2D primitive arrays),
-    // BinaryCatalogStorage, and ReportExporter in multimedia-scanner-filter and statistics-and-reports.
+    // TODO(TD-location-management-1): Integrate StatisticsCalculator (1D/2D primitive arrays),
+    // BinaryCatalogStorage, and ReportExporter in statistics-and-reports.
     private final LocationRepository locationRepository;
+    private final MultimediaScanner scanner;
     private final List<MonitoredDirectory> monitoredDirectories = new ArrayList<>();
     private final Set<Path> monitoredPaths = new HashSet<>();
+    private final List<MultimediaFile> multimediaFiles = new ArrayList<>();
+    private final Map<MediaType, List<MultimediaFile>> filesByMediaType = new EnumMap<>(MediaType.class);
 
     /**
-     * Constructs a catalog backed by the specified location repository.
+     * Constructs a catalog backed by the specified location repository and a default {@link MultimediaScanner}.
      *
      * @param locationRepository the repository managing {@code locations.txt} (must not be {@code null})
      * @throws IllegalArgumentException if {@code locationRepository} is {@code null}
      */
     public MultimediaCatalog(LocationRepository locationRepository) {
+        this(locationRepository, new MultimediaScanner());
+    }
+
+    /**
+     * Constructs a catalog backed by the specified location repository and multimedia scanner.
+     *
+     * @param locationRepository the repository managing {@code locations.txt} (must not be {@code null})
+     * @param scanner            the directory scanner used to discover multimedia files (must not be {@code null})
+     * @throws IllegalArgumentException if {@code locationRepository} or {@code scanner} is {@code null}
+     */
+    public MultimediaCatalog(LocationRepository locationRepository, MultimediaScanner scanner) {
         if (locationRepository == null) {
             throw new IllegalArgumentException("LocationRepository must not be null.");
         }
+        if (scanner == null) {
+            throw new IllegalArgumentException("MultimediaScanner must not be null.");
+        }
         this.locationRepository = locationRepository;
+        this.scanner = scanner;
+        for (MediaType type : MediaType.values()) {
+            filesByMediaType.put(type, List.of());
+        }
     }
 
     /**
@@ -95,11 +121,12 @@ public final class MultimediaCatalog {
             }
         }
 
+        warnings.addAll(rescan());
         return List.copyOf(warnings);
     }
 
     /**
-     * Validates, adds, and persists a new directory to the monitored locations catalog.
+     * Validates, adds, persists, and scans a new directory in the monitored locations catalog.
      *
      * @param rawPath the user-supplied directory path string (must not be {@code null} or blank)
      * @return the newly added {@link MonitoredDirectory}
@@ -133,12 +160,13 @@ public final class MultimediaCatalog {
         monitoredDirectories.add(entry);
         monitoredPaths.add(normalized);
         locationRepository.save(monitoredDirectories);
+        rescan();
         return entry;
     }
 
     /**
      * Removes a monitored directory reference from the in-memory catalog and from {@code locations.txt}
-     * without deleting or modifying any files or directories on disk.
+     * without deleting or modifying any files or directories on disk, and refreshes discovered files.
      *
      * @param rawPath the path of the monitored directory to remove (must not be {@code null} or blank)
      * @return the removed {@link MonitoredDirectory}
@@ -164,7 +192,47 @@ public final class MultimediaCatalog {
         MonitoredDirectory removed = monitoredDirectories.remove(foundIndex);
         monitoredPaths.remove(normalized);
         locationRepository.save(monitoredDirectories);
+        rescan();
         return removed;
+    }
+
+    /**
+     * Refreshes monitored directory statuses and rescans all {@link DirectoryStatus#ACCESSIBLE}
+     * directories on disk, rebuilding the in-memory multimedia file collections and deduplicating
+     * files across overlapping directory roots.
+     *
+     * @return an unmodifiable list of non-fatal warning messages encountered during the scan
+     */
+    public List<String> rescan() {
+        refreshDirectoryStatuses();
+        multimediaFiles.clear();
+
+        Map<MediaType, List<MultimediaFile>> grouped = new EnumMap<>(MediaType.class);
+        for (MediaType type : MediaType.values()) {
+            grouped.put(type, new ArrayList<>());
+        }
+
+        Set<Path> seenFullPaths = new HashSet<>();
+        List<String> warnings = new ArrayList<>();
+
+        for (MonitoredDirectory dir : monitoredDirectories) {
+            if (dir.getStatus() == DirectoryStatus.ACCESSIBLE) {
+                MultimediaScanner.ScanResult result = scanner.scanDirectory(dir.getPath());
+                warnings.addAll(result.warnings());
+                for (MultimediaFile file : result.files()) {
+                    if (seenFullPaths.add(file.getFullPath())) {
+                        multimediaFiles.add(file);
+                        grouped.get(file.getMediaType()).add(file);
+                    }
+                }
+            }
+        }
+
+        for (MediaType type : MediaType.values()) {
+            filesByMediaType.put(type, List.copyOf(grouped.get(type)));
+        }
+
+        return List.copyOf(warnings);
     }
 
     /**
@@ -198,6 +266,24 @@ public final class MultimediaCatalog {
      */
     public List<MonitoredDirectory> getMonitoredDirectories() {
         return List.copyOf(monitoredDirectories);
+    }
+
+    /**
+     * Returns an unmodifiable snapshot of all discovered multimedia files across accessible directories.
+     *
+     * @return an unmodifiable {@link List} of {@link MultimediaFile} entries
+     */
+    public List<MultimediaFile> getMultimediaFiles() {
+        return List.copyOf(multimediaFiles);
+    }
+
+    /**
+     * Returns an unmodifiable map of discovered multimedia files grouped by {@link MediaType}.
+     *
+     * @return an unmodifiable {@link Map} from {@link MediaType} to unmodifiable {@link List} of {@link MultimediaFile}
+     */
+    public Map<MediaType, List<MultimediaFile>> getFilesByMediaType() {
+        return Map.copyOf(filesByMediaType);
     }
 
     private static Path parseAndValidatePathSyntax(String rawPath) {
