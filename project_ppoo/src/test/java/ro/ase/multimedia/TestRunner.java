@@ -1,7 +1,13 @@
 package ro.ase.multimedia;
 
+import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Optional;
+import ro.ase.multimedia.exception.DuplicateLocationException;
+import ro.ase.multimedia.exception.InvalidDirectoryException;
+import ro.ase.multimedia.exception.LocationNotFoundException;
+import ro.ase.multimedia.exception.MultimediaException;
+import ro.ase.multimedia.exception.StorageOperationException;
 import ro.ase.multimedia.model.DirectoryStatus;
 import ro.ase.multimedia.model.MediaType;
 import ro.ase.multimedia.model.MonitoredDirectory;
@@ -36,6 +42,8 @@ public final class TestRunner {
                 TestRunner::multimediaFile_storesNormalizedAttributesForValidInput);
         runTest("T6 multimediaFile_rejectsNegativeSizeUnsupportedExtensionOrMismatchedMediaType",
                 TestRunner::multimediaFile_rejectsNegativeSizeUnsupportedExtensionOrMismatchedMediaType);
+        runTest("T7 customExceptions_preserveMessageAndCauseInHierarchy",
+                TestRunner::customExceptions_preserveMessageAndCauseInHierarchy);
 
         System.out.printf("Tests complete: %d passed, %d failed.%n", passed, failed);
         if (failed > 0) {
@@ -168,5 +176,33 @@ public final class TestRunner {
         assertThrows(IllegalArgumentException.class,
                 () -> new MultimediaFile("  ", ".mp3", MediaType.AUDIO, 100L, dirPath, filePath),
                 "Blank name rejected");
+    }
+
+    private static void customExceptions_preserveMessageAndCauseInHierarchy() {
+        IOException rootCause = new IOException("Disk I/O failure");
+
+        MultimediaException base = new MultimediaException("Base message", rootCause);
+        assertEquals("Base message", base.getMessage(), "Base message preserved");
+        assertEquals(rootCause, base.getCause(), "Base cause preserved");
+        assertTrue(base instanceof RuntimeException, "MultimediaException extends RuntimeException");
+
+        InvalidDirectoryException invalidDir = new InvalidDirectoryException("Invalid path");
+        assertEquals("Invalid path", invalidDir.getMessage(), "InvalidDirectoryException message");
+        assertTrue(invalidDir instanceof MultimediaException, "InvalidDirectoryException extends MultimediaException");
+
+        InvalidDirectoryException invalidDirWithCause = new InvalidDirectoryException("Invalid path", rootCause);
+        assertEquals(rootCause, invalidDirWithCause.getCause(), "InvalidDirectoryException cause");
+
+        DuplicateLocationException duplicate = new DuplicateLocationException("Duplicate path", rootCause);
+        assertEquals("Duplicate path", duplicate.getMessage(), "DuplicateLocationException message");
+        assertEquals(rootCause, duplicate.getCause(), "DuplicateLocationException cause");
+
+        LocationNotFoundException notFound = new LocationNotFoundException("Not found", rootCause);
+        assertEquals("Not found", notFound.getMessage(), "LocationNotFoundException message");
+        assertEquals(rootCause, notFound.getCause(), "LocationNotFoundException cause");
+
+        StorageOperationException storage = new StorageOperationException("Storage failed", rootCause);
+        assertEquals("Storage failed", storage.getMessage(), "StorageOperationException message");
+        assertEquals(rootCause, storage.getCause(), "StorageOperationException cause");
     }
 }
