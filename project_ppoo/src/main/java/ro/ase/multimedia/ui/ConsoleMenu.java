@@ -5,7 +5,9 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Scanner;
+import ro.ase.multimedia.exception.LocationNotFoundException;
 import ro.ase.multimedia.exception.MultimediaException;
+import ro.ase.multimedia.model.MonitoredDirectory;
 import ro.ase.multimedia.service.MultimediaCatalog;
 
 /**
@@ -107,13 +109,59 @@ public final class ConsoleMenu {
     }
 
     private void handleViewDirectories() {
-        out.println("Monitored directories: " + catalog.getMonitoredDirectories().size());
+        List<MonitoredDirectory> dirs = catalog.getMonitoredDirectories();
+        if (dirs.isEmpty()) {
+            out.println("No monitored directories configured.");
+            return;
+        }
+        long[][] matrix = catalog.getStatistics().getDirectoryExtensionMatrix();
+        out.println("Monitored Directories (" + dirs.size() + "):");
+        for (int i = 0; i < dirs.size(); i++) {
+            MonitoredDirectory dir = dirs.get(i);
+            long fileCount = 0L;
+            if (i < matrix.length) {
+                for (long count : matrix[i]) {
+                    fileCount += count;
+                }
+            }
+            out.println("[" + (i + 1) + "] " + dir.getPath()
+                    + " | Status: " + dir.getStatus()
+                    + " | Files: " + fileCount
+                    + " | Added: " + dir.getAddedAt());
+        }
     }
 
     private void handleAddDirectory() {
+        out.print("Enter directory path to add: ");
+        if (!scanner.hasNextLine()) {
+            running = false;
+            return;
+        }
+        String rawPath = scanner.nextLine();
+        MonitoredDirectory added = catalog.addDirectory(rawPath);
+        out.println("Added monitored directory: " + added.getPath());
     }
 
     private void handleRemoveDirectory() {
+        out.print("Enter 1-based directory number or path to remove: ");
+        if (!scanner.hasNextLine()) {
+            running = false;
+            return;
+        }
+        String rawInput = scanner.nextLine().trim();
+        String targetPath = rawInput;
+        try {
+            int index = Integer.parseInt(rawInput);
+            List<MonitoredDirectory> dirs = catalog.getMonitoredDirectories();
+            if (index < 1 || index > dirs.size()) {
+                throw new LocationNotFoundException("Directory index out of range: " + index);
+            }
+            targetPath = dirs.get(index - 1).getPath().toString();
+        } catch (NumberFormatException ignored) {
+            // Input is a path string; pass directly to catalog.removeDirectory
+        }
+        MonitoredDirectory removed = catalog.removeDirectory(targetPath);
+        out.println("Removed monitored directory reference (disk files kept intact): " + removed.getPath());
     }
 
     private void handleDisplayAllFiles() {

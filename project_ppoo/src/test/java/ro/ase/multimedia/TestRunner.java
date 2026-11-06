@@ -104,6 +104,8 @@ public final class TestRunner {
                 TestRunner::catalog_updatesStatisticsOnLifecycleChangesExportsReportAndSavesBinaryOnExit);
         runTest("T29 consoleMenu_initializesPrintsWarningsAndSavesStateOnZeroOrEofExit",
                 TestRunner::consoleMenu_initializesPrintsWarningsAndSavesStateOnZeroOrEofExit);
+        runTest("T30 consoleMenu_addsViewsAndRemovesDirectoriesByIndexAndPathKeepingDiskFilesIntact",
+                TestRunner::consoleMenu_addsViewsAndRemovesDirectoriesByIndexAndPathKeepingDiskFilesIntact);
 
         System.out.printf("Tests complete: %d passed, %d failed.%n", passed, failed);
         if (failed > 0) {
@@ -1073,6 +1075,57 @@ public final class TestRunner {
             new ConsoleMenu(eofCatalog, eofIn, eofOut).run();
             assertTrue(Files.exists(eofLocations), "Creates locations.txt on EOF exit");
             assertTrue(Files.exists(eofBinary), "Saves binary snapshot on EOF exit");
+        } catch (IOException ex) {
+            throw new RuntimeException(ex);
+        } finally {
+            deleteRecursively(tempRoot);
+        }
+    }
+
+    private static void consoleMenu_addsViewsAndRemovesDirectoriesByIndexAndPathKeepingDiskFilesIntact() {
+        Path tempRoot = null;
+        try {
+            tempRoot = Files.createTempDirectory("multimedia-test-t30-");
+            Path locationsFile = tempRoot.resolve("locations.txt");
+            Path dirA = Files.createDirectory(tempRoot.resolve("music"));
+            Path dirB = Files.createDirectory(tempRoot.resolve("photos"));
+            Path sampleMp3 = Files.writeString(dirA.resolve("song.mp3"), "audio-bytes", StandardCharsets.UTF_8);
+            Path sampleJpg = Files.writeString(dirB.resolve("pic.jpg"), "image-bytes", StandardCharsets.UTF_8);
+
+            String commands = String.join("\n",
+                    "1",
+                    "2", dirA.toString(),
+                    "2", dirB.toString(),
+                    "1",
+                    "3", "1",
+                    "3", dirB.toString(),
+                    "1",
+                    "0") + "\n";
+
+            MultimediaCatalog catalog = new MultimediaCatalog(new LocationRepository(locationsFile));
+            ByteArrayInputStream in = new ByteArrayInputStream(commands.getBytes(StandardCharsets.UTF_8));
+            ByteArrayOutputStream outBuffer = new ByteArrayOutputStream();
+            PrintStream out = new PrintStream(outBuffer, true, StandardCharsets.UTF_8);
+
+            new ConsoleMenu(catalog, in, out).run();
+
+            String output = outBuffer.toString(StandardCharsets.UTF_8);
+            assertTrue(output.contains("No monitored directories configured."), "Shows empty message when no dirs");
+            assertTrue(output.contains("Added monitored directory: " + dirA.toAbsolutePath().normalize()),
+                    "Confirms adding dirA");
+            assertTrue(output.contains("Added monitored directory: " + dirB.toAbsolutePath().normalize()),
+                    "Confirms adding dirB");
+            assertTrue(output.contains("[1] " + dirA.toAbsolutePath().normalize() + " | Status: ACCESSIBLE | Files: 1"),
+                    "Displays dirA with 1-based index, status, and file count");
+            assertTrue(output.contains("[2] " + dirB.toAbsolutePath().normalize() + " | Status: ACCESSIBLE | Files: 1"),
+                    "Displays dirB with 1-based index, status, and file count");
+            assertTrue(output.contains("Removed monitored directory reference (disk files kept intact): "
+                    + dirA.toAbsolutePath().normalize()), "Removes dirA by 1-based index");
+            assertTrue(output.contains("Removed monitored directory reference (disk files kept intact): "
+                    + dirB.toAbsolutePath().normalize()), "Removes dirB by path string");
+            assertEquals(0, catalog.getMonitoredDirectories().size(), "All directories removed from catalog");
+            assertTrue(Files.exists(sampleMp3), "dirA file on disk remains intact (S3)");
+            assertTrue(Files.exists(sampleJpg), "dirB file on disk remains intact (S3)");
         } catch (IOException ex) {
             throw new RuntimeException(ex);
         } finally {
