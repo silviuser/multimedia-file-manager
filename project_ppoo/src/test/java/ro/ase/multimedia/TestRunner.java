@@ -20,7 +20,10 @@ import ro.ase.multimedia.model.MonitoredDirectory;
 import ro.ase.multimedia.model.MultimediaFile;
 import ro.ase.multimedia.service.MultimediaCatalog;
 import ro.ase.multimedia.service.MultimediaScanner;
+import ro.ase.multimedia.service.StatisticsCalculator;
+import ro.ase.multimedia.storage.BinaryCatalogStorage;
 import ro.ase.multimedia.storage.LocationRepository;
+import ro.ase.multimedia.storage.ReportExporter;
 
 /**
  * Self-contained automated unit test runner for the Multimedia File Manager.
@@ -81,6 +84,20 @@ public final class TestRunner {
                 TestRunner::catalog_filterByExtensionMatchesCaseInsensitivelyWithOrWithoutDotAndRejectsInvalid);
         runTest("T21 catalog_searchByNameFindsCaseInsensitiveSubstringMatchesAndRejectsBlankQuery",
                 TestRunner::catalog_searchByNameFindsCaseInsensitiveSubstringMatchesAndRejectsBlankQuery);
+        runTest("T22 statisticsCalculator_computes1DAnd2DPrimitiveArraysAndEnforcesDefensiveCopies",
+                TestRunner::statisticsCalculator_computes1DAnd2DPrimitiveArraysAndEnforcesDefensiveCopies);
+        runTest("T23 statisticsCalculator_handlesEmptyInputsAndRejectsNullArguments",
+                TestRunner::statisticsCalculator_handlesEmptyInputsAndRejectsNullArguments);
+        runTest("T24 reportExporter_writesFormattedUtf8ReportAtomicallyAndCleansUpTempFile",
+                TestRunner::reportExporter_writesFormattedUtf8ReportAtomicallyAndCleansUpTempFile);
+        runTest("T25 reportExporter_throwsStorageOperationExceptionOnWriteFailureAndRejectsNulls",
+                TestRunner::reportExporter_throwsStorageOperationExceptionOnWriteFailureAndRejectsNulls);
+        runTest("T26 binaryCatalogStorage_savesAndLoadsRoundTripSnapshotAndReturnsEmptyWhenMissing",
+                TestRunner::binaryCatalogStorage_savesAndLoadsRoundTripSnapshotAndReturnsEmptyWhenMissing);
+        runTest("T27 binaryCatalogStorage_throwsStorageOperationExceptionOnCorruptedFileOrWriteFailure",
+                TestRunner::binaryCatalogStorage_throwsStorageOperationExceptionOnCorruptedFileOrWriteFailure);
+        runTest("T28 catalog_updatesStatisticsOnLifecycleChangesExportsReportAndSavesBinaryOnExit",
+                TestRunner::catalog_updatesStatisticsOnLifecycleChangesExportsReportAndSavesBinaryOnExit);
 
         System.out.printf("Tests complete: %d passed, %d failed.%n", passed, failed);
         if (failed > 0) {
@@ -710,6 +727,304 @@ public final class TestRunner {
             assertThrows(IllegalArgumentException.class,
                     () -> catalog.searchByName("   "),
                     "Blank search query rejected");
+        } catch (IOException ex) {
+            throw new RuntimeException(ex);
+        } finally {
+            deleteRecursively(tempRoot);
+        }
+    }
+
+    private static void statisticsCalculator_computes1DAnd2DPrimitiveArraysAndEnforcesDefensiveCopies() {
+        Path dirA = Path.of("media", "dirA").toAbsolutePath().normalize();
+        Path dirB = Path.of("media", "dirB").toAbsolutePath().normalize();
+        List<MonitoredDirectory> dirs = List.of(
+                new MonitoredDirectory(dirA, DirectoryStatus.ACCESSIBLE, "2026-11-06T10:00:00Z"),
+                new MonitoredDirectory(dirB, DirectoryStatus.ACCESSIBLE, "2026-11-06T10:01:00Z")
+        );
+
+        List<MultimediaFile> files = List.of(
+                new MultimediaFile("a.mp3", ".mp3", MediaType.AUDIO, 100L, dirA, dirA.resolve("a.mp3")),
+                new MultimediaFile("b.mp3", ".mp3", MediaType.AUDIO, 250L, dirA, dirA.resolve("b.mp3")),
+                new MultimediaFile("c.wav", ".wav", MediaType.AUDIO, 500L, dirB, dirB.resolve("c.wav")),
+                new MultimediaFile("d.jpg", ".jpg", MediaType.IMAGE, 1200L, dirA, dirA.resolve("d.jpg")),
+                new MultimediaFile("e.png", ".png", MediaType.IMAGE, 300L, dirB, dirB.resolve("e.png"))
+        );
+
+        StatisticsCalculator calculator = new StatisticsCalculator();
+        StatisticsCalculator.StatisticsSnapshot snapshot = calculator.calculate(dirs, files);
+
+        assertEquals(5, snapshot.getTotalFiles(), "Total files is 5");
+        assertEquals(2350L, snapshot.getTotalBytes(), "Total bytes is 2350");
+
+        int[] counts = snapshot.getCountsByExtension();
+        assertEquals(2, counts[0], "2 .mp3 files");
+        assertEquals(1, counts[1], "1 .wav file");
+        assertEquals(1, counts[2], "1 .jpg file");
+        assertEquals(1, counts[3], "1 .png file");
+
+        long[] bytes = snapshot.getBytesByExtension();
+        assertEquals(350L, bytes[0], "350 bytes for .mp3");
+        assertEquals(500L, bytes[1], "500 bytes for .wav");
+        assertEquals(1200L, bytes[2], "1200 bytes for .jpg");
+        assertEquals(300L, bytes[3], "300 bytes for .png");
+
+        long[][] matrix = snapshot.getDirectoryExtensionMatrix();
+        assertEquals(2, matrix.length, "2 directory rows in 2D matrix");
+        assertEquals(2L, matrix[0][0], "dirA has 2 .mp3");
+        assertEquals(0L, matrix[0][1], "dirA has 0 .wav");
+        assertEquals(1L, matrix[0][2], "dirA has 1 .jpg");
+        assertEquals(0L, matrix[0][3], "dirA has 0 .png");
+        assertEquals(0L, matrix[1][0], "dirB has 0 .mp3");
+        assertEquals(1L, matrix[1][1], "dirB has 1 .wav");
+        assertEquals(0L, matrix[1][2], "dirB has 0 .jpg");
+        assertEquals(1L, matrix[1][3], "dirB has 1 .png");
+
+        counts[0] = 999;
+        bytes[0] = 999999L;
+        matrix[0][0] = 999L;
+        assertEquals(2, snapshot.getCountsByExtension()[0], "Defensive copy protects countsByExtension");
+        assertEquals(350L, snapshot.getBytesByExtension()[0], "Defensive copy protects bytesByExtension");
+        assertEquals(2L, snapshot.getDirectoryExtensionMatrix()[0][0], "Defensive copy protects 2D matrix");
+    }
+
+    private static void statisticsCalculator_handlesEmptyInputsAndRejectsNullArguments() {
+        StatisticsCalculator calculator = new StatisticsCalculator();
+        StatisticsCalculator.StatisticsSnapshot empty = calculator.calculate(List.of(), List.of());
+
+        assertEquals(0, empty.getTotalFiles(), "0 total files when empty");
+        assertEquals(0L, empty.getTotalBytes(), "0 total bytes when empty");
+        assertEquals(4, empty.getCountsByExtension().length, "4 extension slots even when empty");
+        assertEquals(0, empty.getDirectoryExtensionMatrix().length, "0 rows when directories list is empty");
+
+        assertThrows(IllegalArgumentException.class,
+                () -> calculator.calculate(null, List.of()),
+                "Null directories list rejected");
+        assertThrows(IllegalArgumentException.class,
+                () -> calculator.calculate(List.of(), null),
+                "Null files list rejected");
+        assertThrows(IllegalArgumentException.class,
+                () -> new StatisticsCalculator.StatisticsSnapshot(new int[2], new long[4], new long[0][4]),
+                "Invalid countsByExtension length rejected");
+    }
+
+    private static void reportExporter_writesFormattedUtf8ReportAtomicallyAndCleansUpTempFile() {
+        Path tempRoot = null;
+        try {
+            tempRoot = Files.createTempDirectory("multimedia-test-t24-");
+            Path reportFile = tempRoot.resolve("reports").resolve("multimedia-report.txt");
+            ReportExporter exporter = new ReportExporter(reportFile);
+
+            assertEquals(reportFile.toAbsolutePath().normalize(), exporter.getReportFile(), "Normalized reportFile");
+
+            Path dirA = tempRoot.resolve("music").toAbsolutePath().normalize();
+            List<MonitoredDirectory> dirs = List.of(
+                    new MonitoredDirectory(dirA, DirectoryStatus.ACCESSIBLE, "2026-11-06T12:00:00Z")
+            );
+            List<MultimediaFile> files = List.of(
+                    new MultimediaFile("song.mp3", ".mp3", MediaType.AUDIO, 2048L, dirA, dirA.resolve("song.mp3")),
+                    new MultimediaFile("cover.png", ".png", MediaType.IMAGE, 1024L, dirA, dirA.resolve("cover.png"))
+            );
+            StatisticsCalculator.StatisticsSnapshot stats = new StatisticsCalculator().calculate(dirs, files);
+
+            exporter.export(dirs, files, stats);
+
+            assertTrue(Files.exists(reportFile), "Report file created");
+            assertTrue(!Files.exists(reportFile.resolveSibling("multimedia-report.txt.tmp")),
+                    "No leftover .tmp file after export");
+
+            String content = Files.readString(reportFile, StandardCharsets.UTF_8);
+            assertTrue(content.contains("=== MULTIMEDIA CATALOG REPORT ==="), "Contains report header");
+            assertTrue(content.contains("Monitored Directories: 1"), "Contains directory total");
+            assertTrue(content.contains("Total Multimedia Files: 2"), "Contains file total");
+            assertTrue(content.contains("Total Size (Bytes): 3072"), "Contains byte total");
+            assertTrue(content.contains(".mp3 -> Count: 1 | Bytes: 2048"), "Contains 1D .mp3 stats");
+            assertTrue(content.contains(".png -> Count: 1 | Bytes: 1024"), "Contains 1D .png stats");
+            assertTrue(content.contains("[2D Directory-by-Extension Matrix]"), "Contains 2D matrix section");
+            assertTrue(content.contains(dirA + " | 1 | 0 | 0 | 1"), "Contains 2D matrix row for dirA");
+            assertTrue(content.contains("song.mp3 | Type: AUDIO | Ext: .mp3 | Size: 2048 bytes"), "Contains file entry");
+        } catch (IOException ex) {
+            throw new RuntimeException(ex);
+        } finally {
+            deleteRecursively(tempRoot);
+        }
+    }
+
+    private static void reportExporter_throwsStorageOperationExceptionOnWriteFailureAndRejectsNulls() {
+        Path tempRoot = null;
+        try {
+            tempRoot = Files.createTempDirectory("multimedia-test-t25-");
+            Path dirAsReport = Files.createDirectory(tempRoot.resolve("dir-as-report"));
+            ReportExporter failingExporter = new ReportExporter(dirAsReport);
+            StatisticsCalculator.StatisticsSnapshot emptyStats =
+                    new StatisticsCalculator().calculate(List.of(), List.of());
+
+            assertThrows(StorageOperationException.class,
+                    () -> failingExporter.export(List.of(), List.of(), emptyStats),
+                    "Exporting over a directory throws StorageOperationException");
+            assertTrue(!Files.exists(dirAsReport.resolveSibling("dir-as-report.tmp")),
+                    "Failed export cleans up temporary sibling file");
+
+            assertThrows(IllegalArgumentException.class,
+                    () -> new ReportExporter(null),
+                    "Null reportFile rejected");
+            assertThrows(IllegalArgumentException.class,
+                    () -> failingExporter.export(null, List.of(), emptyStats),
+                    "Null directories rejected");
+            assertThrows(IllegalArgumentException.class,
+                    () -> failingExporter.export(List.of(), null, emptyStats),
+                    "Null files rejected");
+            assertThrows(IllegalArgumentException.class,
+                    () -> failingExporter.export(List.of(), List.of(), null),
+                    "Null statistics rejected");
+        } catch (IOException ex) {
+            throw new RuntimeException(ex);
+        } finally {
+            deleteRecursively(tempRoot);
+        }
+    }
+
+    private static void binaryCatalogStorage_savesAndLoadsRoundTripSnapshotAndReturnsEmptyWhenMissing() {
+        Path tempRoot = null;
+        try {
+            tempRoot = Files.createTempDirectory("multimedia-test-t26-");
+            Path binaryFile = tempRoot.resolve("data").resolve("catalog.bin");
+            BinaryCatalogStorage storage = new BinaryCatalogStorage(binaryFile);
+
+            assertEquals(binaryFile.toAbsolutePath().normalize(), storage.getBinaryFile(), "Normalized binaryFile");
+            assertTrue(storage.load().isEmpty(), "Missing catalog.bin returns Optional.empty()");
+
+            Path dirA = tempRoot.resolve("dirA").toAbsolutePath().normalize();
+            Path dirB = tempRoot.resolve("dirB").toAbsolutePath().normalize();
+            List<MonitoredDirectory> dirs = List.of(
+                    new MonitoredDirectory(dirA, DirectoryStatus.ACCESSIBLE, "2026-11-06T12:00:00Z"),
+                    new MonitoredDirectory(dirB, DirectoryStatus.MISSING, "2026-11-06T12:05:00Z")
+            );
+            List<MultimediaFile> files = List.of(
+                    new MultimediaFile("alpha.mp3", ".mp3", MediaType.AUDIO, 4096L, dirA, dirA.resolve("alpha.mp3")),
+                    new MultimediaFile("beta.jpg", ".jpg", MediaType.IMAGE, 8192L, dirA, dirA.resolve("beta.jpg"))
+            );
+            StatisticsCalculator.StatisticsSnapshot stats = new StatisticsCalculator().calculate(dirs, files);
+
+            storage.save(dirs, files, stats);
+            assertTrue(Files.exists(binaryFile), "catalog.bin created after save");
+            assertTrue(!Files.exists(binaryFile.resolveSibling("catalog.bin.tmp")), "No leftover .tmp file");
+
+            BinaryCatalogStorage.CatalogSnapshot restored = storage.load().orElseThrow();
+            assertEquals(2, restored.directories().size(), "2 directories restored");
+            assertEquals(dirA, restored.directories().get(0).getPath(), "Restored dirA path");
+            assertEquals(DirectoryStatus.MISSING, restored.directories().get(1).getStatus(), "Restored dirB status");
+            assertEquals(2, restored.files().size(), "2 files restored");
+            assertEquals("alpha.mp3", restored.files().get(0).getName(), "Restored alpha.mp3");
+            assertEquals(4096L, restored.files().get(0).getSizeBytes(), "Restored alpha.mp3 size");
+
+            StatisticsCalculator.StatisticsSnapshot restoredStats = restored.statistics();
+            assertEquals(2, restoredStats.getTotalFiles(), "Restored totalFiles is 2");
+            assertEquals(12288L, restoredStats.getTotalBytes(), "Restored totalBytes is 12288");
+            assertEquals(1, restoredStats.getCountsByExtension()[0], "Restored 1D .mp3 count");
+            assertEquals(1, restoredStats.getCountsByExtension()[2], "Restored 1D .jpg count");
+            assertEquals(1L, restoredStats.getDirectoryExtensionMatrix()[0][0], "Restored 2D matrix [0][0]");
+            assertEquals(1L, restoredStats.getDirectoryExtensionMatrix()[0][2], "Restored 2D matrix [0][2]");
+        } catch (IOException ex) {
+            throw new RuntimeException(ex);
+        } finally {
+            deleteRecursively(tempRoot);
+        }
+    }
+
+    private static void binaryCatalogStorage_throwsStorageOperationExceptionOnCorruptedFileOrWriteFailure() {
+        Path tempRoot = null;
+        try {
+            tempRoot = Files.createTempDirectory("multimedia-test-t27-");
+            Path corruptedFile = tempRoot.resolve("corrupted.bin");
+            Files.writeString(corruptedFile, "NOT_A_VALID_BINARY_CATALOG", StandardCharsets.UTF_8);
+
+            BinaryCatalogStorage corruptedStorage = new BinaryCatalogStorage(corruptedFile);
+            assertThrows(StorageOperationException.class,
+                    corruptedStorage::load,
+                    "Corrupted magic header throws StorageOperationException");
+
+            Path truncatedFile = tempRoot.resolve("truncated.bin");
+            Files.write(truncatedFile, new byte[]{0x4D, 0x46});
+            BinaryCatalogStorage truncatedStorage = new BinaryCatalogStorage(truncatedFile);
+            assertThrows(StorageOperationException.class,
+                    truncatedStorage::load,
+                    "Truncated binary stream throws StorageOperationException");
+
+            Path dirAsBinary = Files.createDirectory(tempRoot.resolve("dir-as-bin"));
+            BinaryCatalogStorage failingStorage = new BinaryCatalogStorage(dirAsBinary);
+            StatisticsCalculator.StatisticsSnapshot emptyStats =
+                    new StatisticsCalculator().calculate(List.of(), List.of());
+
+            assertThrows(StorageOperationException.class,
+                    () -> failingStorage.save(List.of(), List.of(), emptyStats),
+                    "Saving over a directory throws StorageOperationException");
+            assertTrue(!Files.exists(dirAsBinary.resolveSibling("dir-as-bin.tmp")),
+                    "Failed binary save cleans up temporary sibling file");
+            assertThrows(IllegalArgumentException.class,
+                    () -> new BinaryCatalogStorage(null),
+                    "Null binaryFile rejected");
+        } catch (IOException ex) {
+            throw new RuntimeException(ex);
+        } finally {
+            deleteRecursively(tempRoot);
+        }
+    }
+
+    private static void catalog_updatesStatisticsOnLifecycleChangesExportsReportAndSavesBinaryOnExit() {
+        Path tempRoot = null;
+        try {
+            tempRoot = Files.createTempDirectory("multimedia-test-t28-");
+            Path locationsFile = tempRoot.resolve("locations.txt");
+            Path binaryFile = tempRoot.resolve("data").resolve("catalog.bin");
+            Path reportFile = tempRoot.resolve("reports").resolve("multimedia-report.txt");
+
+            Path dirOne = Files.createDirectory(tempRoot.resolve("dirOne"));
+            Path dirTwo = Files.createDirectory(tempRoot.resolve("dirTwo"));
+            Files.writeString(dirOne.resolve("track.mp3"), "1234", StandardCharsets.UTF_8);
+            Files.writeString(dirTwo.resolve("photo.png"), "123456", StandardCharsets.UTF_8);
+
+            MultimediaCatalog catalog = new MultimediaCatalog(
+                    new LocationRepository(locationsFile),
+                    new MultimediaScanner(),
+                    new StatisticsCalculator(),
+                    new BinaryCatalogStorage(binaryFile),
+                    new ReportExporter(reportFile));
+
+            assertEquals(0, catalog.getStatistics().getTotalFiles(), "0 files before initialize");
+            catalog.initialize();
+            assertEquals(0, catalog.getStatistics().getTotalFiles(), "0 files after empty initialize");
+
+            catalog.addDirectory(dirOne.toString());
+            assertEquals(1, catalog.getStatistics().getTotalFiles(), "1 file after adding dirOne");
+            assertEquals(4L, catalog.getStatistics().getTotalBytes(), "4 bytes after adding dirOne");
+            assertEquals(1, catalog.getStatistics().getCountsByExtension()[0], "1 .mp3 after adding dirOne");
+            assertEquals(1, catalog.getStatistics().getDirectoryExtensionMatrix().length, "1 matrix row");
+            assertEquals(1L, catalog.getStatistics().getDirectoryExtensionMatrix()[0][0], "Row 0 has 1 .mp3");
+
+            catalog.addDirectory(dirTwo.toString());
+            assertEquals(2, catalog.getStatistics().getTotalFiles(), "2 files after adding dirTwo");
+            assertEquals(10L, catalog.getStatistics().getTotalBytes(), "10 bytes after adding dirTwo");
+            assertEquals(2, catalog.getStatistics().getDirectoryExtensionMatrix().length, "2 matrix rows");
+            assertEquals(1L, catalog.getStatistics().getDirectoryExtensionMatrix()[1][3], "Row 1 has 1 .png");
+
+            catalog.exportReport();
+            assertTrue(Files.exists(reportFile), "exportReport creates multimedia-report.txt");
+            String reportContent = Files.readString(reportFile, StandardCharsets.UTF_8);
+            assertTrue(reportContent.contains("Total Multimedia Files: 2"), "Report reflects 2 files");
+
+            catalog.removeDirectory(dirOne.toString());
+            assertEquals(1, catalog.getStatistics().getTotalFiles(), "1 file after removing dirOne");
+            assertEquals(6L, catalog.getStatistics().getTotalBytes(), "6 bytes after removing dirOne");
+            assertEquals(1, catalog.getStatistics().getDirectoryExtensionMatrix().length, "1 matrix row after remove");
+
+            assertTrue(catalog.loadBinarySnapshot().isEmpty(), "No binary snapshot before save");
+            catalog.saveAllOnExit();
+            assertTrue(Files.exists(binaryFile), "saveAllOnExit creates catalog.bin");
+
+            BinaryCatalogStorage.CatalogSnapshot loaded = catalog.loadBinarySnapshot().orElseThrow();
+            assertEquals(1, loaded.directories().size(), "1 directory in binary snapshot");
+            assertEquals(1, loaded.files().size(), "1 file in binary snapshot");
+            assertEquals(6L, loaded.statistics().getTotalBytes(), "6 bytes in binary snapshot");
         } catch (IOException ex) {
             throw new RuntimeException(ex);
         } finally {

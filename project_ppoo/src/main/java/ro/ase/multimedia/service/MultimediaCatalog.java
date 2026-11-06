@@ -10,6 +10,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import ro.ase.multimedia.exception.DuplicateLocationException;
 import ro.ase.multimedia.exception.InvalidDirectoryException;
@@ -19,25 +20,31 @@ import ro.ase.multimedia.model.DirectoryStatus;
 import ro.ase.multimedia.model.MediaType;
 import ro.ase.multimedia.model.MonitoredDirectory;
 import ro.ase.multimedia.model.MultimediaFile;
+import ro.ase.multimedia.storage.BinaryCatalogStorage;
 import ro.ase.multimedia.storage.LocationRepository;
+import ro.ase.multimedia.storage.ReportExporter;
 
 /**
- * Coordinates the in-memory catalog of monitored directories and discovered multimedia files,
- * synchronizing directory state with {@link LocationRepository}.
+ * Coordinates the in-memory catalog of monitored directories, discovered multimedia files,
+ * and 1D/2D primitive array statistics, synchronizing state with {@link LocationRepository},
+ * {@link BinaryCatalogStorage}, and {@link ReportExporter}.
  */
 public final class MultimediaCatalog {
 
-    // TODO(TD-location-management-1): Integrate StatisticsCalculator (1D/2D primitive arrays),
-    // BinaryCatalogStorage, and ReportExporter in statistics-and-reports.
     private final LocationRepository locationRepository;
     private final MultimediaScanner scanner;
+    private final StatisticsCalculator statisticsCalculator;
+    private final BinaryCatalogStorage binaryStorage;
+    private final ReportExporter reportExporter;
     private final List<MonitoredDirectory> monitoredDirectories = new ArrayList<>();
     private final Set<Path> monitoredPaths = new HashSet<>();
     private final List<MultimediaFile> multimediaFiles = new ArrayList<>();
     private final Map<MediaType, List<MultimediaFile>> filesByMediaType = new EnumMap<>(MediaType.class);
+    private StatisticsCalculator.StatisticsSnapshot currentStatistics;
 
     /**
-     * Constructs a catalog backed by the specified location repository and a default {@link MultimediaScanner}.
+     * Constructs a catalog backed by the specified location repository and default scanner, calculator,
+     * binary storage ({@code data/catalog.bin}), and report exporter ({@code reports/multimedia-report.txt}).
      *
      * @param locationRepository the repository managing {@code locations.txt} (must not be {@code null})
      * @throws IllegalArgumentException if {@code locationRepository} is {@code null}
@@ -47,24 +54,71 @@ public final class MultimediaCatalog {
     }
 
     /**
-     * Constructs a catalog backed by the specified location repository and multimedia scanner.
+     * Constructs a catalog backed by the specified location repository and multimedia scanner,
+     * with default calculator, binary storage, and report exporter resolved relative to the locations file parent.
      *
      * @param locationRepository the repository managing {@code locations.txt} (must not be {@code null})
      * @param scanner            the directory scanner used to discover multimedia files (must not be {@code null})
      * @throws IllegalArgumentException if {@code locationRepository} or {@code scanner} is {@code null}
      */
     public MultimediaCatalog(LocationRepository locationRepository, MultimediaScanner scanner) {
+        this(
+                locationRepository,
+                scanner,
+                new StatisticsCalculator(),
+                new BinaryCatalogStorage(resolveBaseDir(locationRepository).resolve("data").resolve("catalog.bin")),
+                new ReportExporter(resolveBaseDir(locationRepository).resolve("reports").resolve("multimedia-report.txt")));
+    }
+
+    /**
+     * Constructs a catalog with explicit location repository, scanner, statistics calculator,
+     * binary catalog storage, and text report exporter.
+     *
+     * @param locationRepository   the repository managing {@code locations.txt} (must not be {@code null})
+     * @param scanner              the directory scanner used to discover multimedia files (must not be {@code null})
+     * @param statisticsCalculator the calculator for 1D and 2D primitive array statistics (must not be {@code null})
+     * @param binaryStorage        the binary snapshot storage for {@code catalog.bin} (must not be {@code null})
+     * @param reportExporter       the UTF-8 text report exporter for {@code multimedia-report.txt} (must not be {@code null})
+     * @throws IllegalArgumentException if any argument is {@code null}
+     */
+    public MultimediaCatalog(
+            LocationRepository locationRepository,
+            MultimediaScanner scanner,
+            StatisticsCalculator statisticsCalculator,
+            BinaryCatalogStorage binaryStorage,
+            ReportExporter reportExporter) {
         if (locationRepository == null) {
             throw new IllegalArgumentException("LocationRepository must not be null.");
         }
         if (scanner == null) {
             throw new IllegalArgumentException("MultimediaScanner must not be null.");
         }
+        if (statisticsCalculator == null) {
+            throw new IllegalArgumentException("StatisticsCalculator must not be null.");
+        }
+        if (binaryStorage == null) {
+            throw new IllegalArgumentException("BinaryCatalogStorage must not be null.");
+        }
+        if (reportExporter == null) {
+            throw new IllegalArgumentException("ReportExporter must not be null.");
+        }
         this.locationRepository = locationRepository;
         this.scanner = scanner;
+        this.statisticsCalculator = statisticsCalculator;
+        this.binaryStorage = binaryStorage;
+        this.reportExporter = reportExporter;
         for (MediaType type : MediaType.values()) {
             filesByMediaType.put(type, List.of());
         }
+        this.currentStatistics = statisticsCalculator.calculate(List.of(), List.of());
+    }
+
+    private static Path resolveBaseDir(LocationRepository locationRepository) {
+        if (locationRepository == null) {
+            throw new IllegalArgumentException("LocationRepository must not be null.");
+        }
+        Path parent = locationRepository.getLocationsFile().getParent();
+        return parent != null ? parent : Path.of("").toAbsolutePath().normalize();
     }
 
     /**
@@ -233,6 +287,7 @@ public final class MultimediaCatalog {
             filesByMediaType.put(type, List.copyOf(grouped.get(type)));
         }
 
+        currentStatistics = statisticsCalculator.calculate(monitoredDirectories, multimediaFiles);
         return List.copyOf(warnings);
     }
 
@@ -251,13 +306,58 @@ public final class MultimediaCatalog {
     }
 
     /**
-     * Refreshes directory statuses and saves the current in-memory monitored directory list to {@code locations.txt}.
+     * Returns the current immutable 1D and 2D primitive array statistics snapshot.
      *
-     * @throws StorageOperationException if writing {@code locations.txt} fails
+     * @return the current {@link StatisticsCalculator.StatisticsSnapshot}
+     */
+    public StatisticsCalculator.StatisticsSnapshot getStatistics() {
+        return currentStatistics;
+    }
+
+    /**
+     * Exports a formatted UTF-8 text report of the current catalog and primitive array statistics
+     * using the configured {@link ReportExporter}.
+     *
+     * @throws StorageOperationException if writing the report file fails
+     */
+    public void exportReport() {
+        currentStatistics = statisticsCalculator.calculate(monitoredDirectories, multimediaFiles);
+        reportExporter.export(monitoredDirectories, multimediaFiles, currentStatistics);
+    }
+
+    /**
+     * Saves the current catalog and primitive array statistics to the binary snapshot file
+     * using the configured {@link BinaryCatalogStorage}.
+     *
+     * @throws StorageOperationException if writing the binary snapshot fails
+     */
+    public void saveBinarySnapshot() {
+        currentStatistics = statisticsCalculator.calculate(monitoredDirectories, multimediaFiles);
+        binaryStorage.save(monitoredDirectories, multimediaFiles, currentStatistics);
+    }
+
+    /**
+     * Loads the last persisted binary catalog snapshot from disk if available.
+     *
+     * @return an {@link Optional} containing the loaded {@link BinaryCatalogStorage.CatalogSnapshot},
+     *         or {@link Optional#empty()} if no binary snapshot exists yet
+     * @throws StorageOperationException if reading or validating the binary snapshot fails
+     */
+    public Optional<BinaryCatalogStorage.CatalogSnapshot> loadBinarySnapshot() {
+        return binaryStorage.load();
+    }
+
+    /**
+     * Refreshes directory statuses, recalculates primitive array statistics, saves the current in-memory
+     * monitored directory list to {@code locations.txt}, and persists the binary snapshot to {@code catalog.bin}.
+     *
+     * @throws StorageOperationException if writing {@code locations.txt} or {@code catalog.bin} fails
      */
     public void saveAllOnExit() {
         refreshDirectoryStatuses();
+        currentStatistics = statisticsCalculator.calculate(monitoredDirectories, multimediaFiles);
         locationRepository.save(monitoredDirectories);
+        binaryStorage.save(monitoredDirectories, multimediaFiles, currentStatistics);
     }
 
     /**
