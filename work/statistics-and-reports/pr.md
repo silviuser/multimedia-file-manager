@@ -4,7 +4,7 @@ artifact: pr
 branch: statistics-and-reports
 base: main
 updated_commit: none
-pr: not created
+pr: https://github.com/silviuser/multimedia-file-manager/pull/4
 ---
 
 # feat(service,storage): add primitive array statistics calculator, report exporter, and binary catalog storage
