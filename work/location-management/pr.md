@@ -4,7 +4,7 @@ artifact: pr
 branch: location-management
 base: main
 updated_commit: none
-pr: not created
+pr: https://github.com/silviuser/multimedia-file-manager/pull/2
 ---
 
 # feat(location-management): implement monitored location persistence and catalog directory management
