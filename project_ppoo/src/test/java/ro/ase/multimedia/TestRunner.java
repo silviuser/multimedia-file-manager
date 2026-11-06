@@ -1,6 +1,9 @@
 package ro.ase.multimedia;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -24,6 +27,7 @@ import ro.ase.multimedia.service.StatisticsCalculator;
 import ro.ase.multimedia.storage.BinaryCatalogStorage;
 import ro.ase.multimedia.storage.LocationRepository;
 import ro.ase.multimedia.storage.ReportExporter;
+import ro.ase.multimedia.ui.ConsoleMenu;
 
 /**
  * Self-contained automated unit test runner for the Multimedia File Manager.
@@ -98,6 +102,8 @@ public final class TestRunner {
                 TestRunner::binaryCatalogStorage_throwsStorageOperationExceptionOnCorruptedFileOrWriteFailure);
         runTest("T28 catalog_updatesStatisticsOnLifecycleChangesExportsReportAndSavesBinaryOnExit",
                 TestRunner::catalog_updatesStatisticsOnLifecycleChangesExportsReportAndSavesBinaryOnExit);
+        runTest("T29 consoleMenu_initializesPrintsWarningsAndSavesStateOnZeroOrEofExit",
+                TestRunner::consoleMenu_initializesPrintsWarningsAndSavesStateOnZeroOrEofExit);
 
         System.out.printf("Tests complete: %d passed, %d failed.%n", passed, failed);
         if (failed > 0) {
@@ -1025,6 +1031,48 @@ public final class TestRunner {
             assertEquals(1, loaded.directories().size(), "1 directory in binary snapshot");
             assertEquals(1, loaded.files().size(), "1 file in binary snapshot");
             assertEquals(6L, loaded.statistics().getTotalBytes(), "6 bytes in binary snapshot");
+        } catch (IOException ex) {
+            throw new RuntimeException(ex);
+        } finally {
+            deleteRecursively(tempRoot);
+        }
+    }
+
+    private static void consoleMenu_initializesPrintsWarningsAndSavesStateOnZeroOrEofExit() {
+        Path tempRoot = null;
+        try {
+            tempRoot = Files.createTempDirectory("multimedia-test-t29-");
+            Path locationsFile = tempRoot.resolve("locations.txt");
+            Path binaryFile = tempRoot.resolve("data").resolve("catalog.bin");
+            Path missingDir = tempRoot.resolve("missing-folder");
+            Files.write(locationsFile, List.of(missingDir.toString()), StandardCharsets.UTF_8);
+
+            MultimediaCatalog catalog = new MultimediaCatalog(new LocationRepository(locationsFile));
+            ByteArrayInputStream in = new ByteArrayInputStream("0\n".getBytes(StandardCharsets.UTF_8));
+            ByteArrayOutputStream outBuffer = new ByteArrayOutputStream();
+            PrintStream out = new PrintStream(outBuffer, true, StandardCharsets.UTF_8);
+
+            ConsoleMenu menu = new ConsoleMenu(catalog, in, out);
+            menu.run();
+
+            String output = outBuffer.toString(StandardCharsets.UTF_8);
+            assertTrue(output.contains("=== Multimedia File Manager ==="), "Prints application header");
+            assertTrue(output.contains("[WARN] Monitored directory is missing on disk:"), "Prints startup warning");
+            assertTrue(output.contains("0 - Save state and exit"), "Prints numbered menu options");
+            assertTrue(output.contains("State saved."), "Prints exit confirmation");
+            assertTrue(Files.exists(binaryFile), "Saves binary snapshot on option 0 exit");
+
+            Path eofRoot = Files.createDirectory(tempRoot.resolve("eof-run"));
+            Path eofLocations = eofRoot.resolve("locations.txt");
+            Path eofBinary = eofRoot.resolve("data").resolve("catalog.bin");
+            MultimediaCatalog eofCatalog = new MultimediaCatalog(new LocationRepository(eofLocations));
+            ByteArrayInputStream eofIn = new ByteArrayInputStream(new byte[0]);
+            ByteArrayOutputStream eofOutBuffer = new ByteArrayOutputStream();
+            PrintStream eofOut = new PrintStream(eofOutBuffer, true, StandardCharsets.UTF_8);
+
+            new ConsoleMenu(eofCatalog, eofIn, eofOut).run();
+            assertTrue(Files.exists(eofLocations), "Creates locations.txt on EOF exit");
+            assertTrue(Files.exists(eofBinary), "Saves binary snapshot on EOF exit");
         } catch (IOException ex) {
             throw new RuntimeException(ex);
         } finally {
