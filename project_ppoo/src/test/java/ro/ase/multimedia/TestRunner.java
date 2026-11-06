@@ -96,6 +96,8 @@ public final class TestRunner {
                 TestRunner::binaryCatalogStorage_savesAndLoadsRoundTripSnapshotAndReturnsEmptyWhenMissing);
         runTest("T27 binaryCatalogStorage_throwsStorageOperationExceptionOnCorruptedFileOrWriteFailure",
                 TestRunner::binaryCatalogStorage_throwsStorageOperationExceptionOnCorruptedFileOrWriteFailure);
+        runTest("T28 catalog_updatesStatisticsOnLifecycleChangesExportsReportAndSavesBinaryOnExit",
+                TestRunner::catalog_updatesStatisticsOnLifecycleChangesExportsReportAndSavesBinaryOnExit);
 
         System.out.printf("Tests complete: %d passed, %d failed.%n", passed, failed);
         if (failed > 0) {
@@ -961,6 +963,68 @@ public final class TestRunner {
             assertThrows(IllegalArgumentException.class,
                     () -> new BinaryCatalogStorage(null),
                     "Null binaryFile rejected");
+        } catch (IOException ex) {
+            throw new RuntimeException(ex);
+        } finally {
+            deleteRecursively(tempRoot);
+        }
+    }
+
+    private static void catalog_updatesStatisticsOnLifecycleChangesExportsReportAndSavesBinaryOnExit() {
+        Path tempRoot = null;
+        try {
+            tempRoot = Files.createTempDirectory("multimedia-test-t28-");
+            Path locationsFile = tempRoot.resolve("locations.txt");
+            Path binaryFile = tempRoot.resolve("data").resolve("catalog.bin");
+            Path reportFile = tempRoot.resolve("reports").resolve("multimedia-report.txt");
+
+            Path dirOne = Files.createDirectory(tempRoot.resolve("dirOne"));
+            Path dirTwo = Files.createDirectory(tempRoot.resolve("dirTwo"));
+            Files.writeString(dirOne.resolve("track.mp3"), "1234", StandardCharsets.UTF_8);
+            Files.writeString(dirTwo.resolve("photo.png"), "123456", StandardCharsets.UTF_8);
+
+            MultimediaCatalog catalog = new MultimediaCatalog(
+                    new LocationRepository(locationsFile),
+                    new MultimediaScanner(),
+                    new StatisticsCalculator(),
+                    new BinaryCatalogStorage(binaryFile),
+                    new ReportExporter(reportFile));
+
+            assertEquals(0, catalog.getStatistics().getTotalFiles(), "0 files before initialize");
+            catalog.initialize();
+            assertEquals(0, catalog.getStatistics().getTotalFiles(), "0 files after empty initialize");
+
+            catalog.addDirectory(dirOne.toString());
+            assertEquals(1, catalog.getStatistics().getTotalFiles(), "1 file after adding dirOne");
+            assertEquals(4L, catalog.getStatistics().getTotalBytes(), "4 bytes after adding dirOne");
+            assertEquals(1, catalog.getStatistics().getCountsByExtension()[0], "1 .mp3 after adding dirOne");
+            assertEquals(1, catalog.getStatistics().getDirectoryExtensionMatrix().length, "1 matrix row");
+            assertEquals(1L, catalog.getStatistics().getDirectoryExtensionMatrix()[0][0], "Row 0 has 1 .mp3");
+
+            catalog.addDirectory(dirTwo.toString());
+            assertEquals(2, catalog.getStatistics().getTotalFiles(), "2 files after adding dirTwo");
+            assertEquals(10L, catalog.getStatistics().getTotalBytes(), "10 bytes after adding dirTwo");
+            assertEquals(2, catalog.getStatistics().getDirectoryExtensionMatrix().length, "2 matrix rows");
+            assertEquals(1L, catalog.getStatistics().getDirectoryExtensionMatrix()[1][3], "Row 1 has 1 .png");
+
+            catalog.exportReport();
+            assertTrue(Files.exists(reportFile), "exportReport creates multimedia-report.txt");
+            String reportContent = Files.readString(reportFile, StandardCharsets.UTF_8);
+            assertTrue(reportContent.contains("Total Multimedia Files: 2"), "Report reflects 2 files");
+
+            catalog.removeDirectory(dirOne.toString());
+            assertEquals(1, catalog.getStatistics().getTotalFiles(), "1 file after removing dirOne");
+            assertEquals(6L, catalog.getStatistics().getTotalBytes(), "6 bytes after removing dirOne");
+            assertEquals(1, catalog.getStatistics().getDirectoryExtensionMatrix().length, "1 matrix row after remove");
+
+            assertTrue(catalog.loadBinarySnapshot().isEmpty(), "No binary snapshot before save");
+            catalog.saveAllOnExit();
+            assertTrue(Files.exists(binaryFile), "saveAllOnExit creates catalog.bin");
+
+            BinaryCatalogStorage.CatalogSnapshot loaded = catalog.loadBinarySnapshot().orElseThrow();
+            assertEquals(1, loaded.directories().size(), "1 directory in binary snapshot");
+            assertEquals(1, loaded.files().size(), "1 file in binary snapshot");
+            assertEquals(6L, loaded.statistics().getTotalBytes(), "6 bytes in binary snapshot");
         } catch (IOException ex) {
             throw new RuntimeException(ex);
         } finally {
