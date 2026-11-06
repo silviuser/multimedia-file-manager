@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import ro.ase.multimedia.exception.DuplicateLocationException;
@@ -284,6 +285,59 @@ public final class MultimediaCatalog {
      */
     public Map<MediaType, List<MultimediaFile>> getFilesByMediaType() {
         return Map.copyOf(filesByMediaType);
+    }
+
+    /**
+     * Filters discovered multimedia files by their {@link MediaType} category ({@code AUDIO} or {@code IMAGE}).
+     *
+     * @param mediaType the target media type (must not be {@code null})
+     * @return an unmodifiable {@link List} of matching {@link MultimediaFile} entries
+     * @throws IllegalArgumentException if {@code mediaType} is {@code null}
+     */
+    public List<MultimediaFile> filterByMediaType(MediaType mediaType) {
+        if (mediaType == null) {
+            throw new IllegalArgumentException("MediaType must not be null.");
+        }
+        return List.copyOf(filesByMediaType.getOrDefault(mediaType, List.of()));
+    }
+
+    /**
+     * Filters discovered multimedia files by a supported file extension in a case-insensitive manner,
+     * accepting extensions with or without a leading dot (e.g. {@code ".mp3"} or {@code "MP3"}).
+     *
+     * @param extension the file extension to filter by (must be a supported extension)
+     * @return an unmodifiable {@link List} of matching {@link MultimediaFile} entries
+     * @throws IllegalArgumentException if {@code extension} is {@code null}, blank, or unsupported
+     */
+    public List<MultimediaFile> filterByExtension(String extension) {
+        if (extension == null || extension.isBlank()) {
+            throw new IllegalArgumentException("File extension must not be null or blank.");
+        }
+        if (MediaType.fromExtension(extension).isEmpty()) {
+            throw new IllegalArgumentException("Unsupported multimedia extension: " + extension);
+        }
+        String trimmed = extension.trim().toLowerCase(Locale.ROOT);
+        String normalized = trimmed.startsWith(".") ? trimmed : "." + trimmed;
+        return multimediaFiles.stream()
+                .filter(f -> f.getExtension().equals(normalized))
+                .toList();
+    }
+
+    /**
+     * Searches discovered multimedia files by a case-insensitive filename substring.
+     *
+     * @param query the filename substring to search for (must not be {@code null} or blank)
+     * @return an unmodifiable {@link List} of matching {@link MultimediaFile} entries
+     * @throws IllegalArgumentException if {@code query} is {@code null} or blank
+     */
+    public List<MultimediaFile> searchByName(String query) {
+        if (query == null || query.isBlank()) {
+            throw new IllegalArgumentException("Search query must not be null or blank.");
+        }
+        String normalizedQuery = query.trim().toLowerCase(Locale.ROOT);
+        return multimediaFiles.stream()
+                .filter(f -> f.getName().toLowerCase(Locale.ROOT).contains(normalizedQuery))
+                .toList();
     }
 
     private static Path parseAndValidatePathSyntax(String rawPath) {
