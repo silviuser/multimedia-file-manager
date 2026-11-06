@@ -4,7 +4,7 @@ artifact: pr
 branch: console-menu-app
 base: main
 updated_commit: none
-pr: not created
+pr: https://github.com/silviuser/multimedia-file-manager/pull/5
 ---
 
 # feat(ui): interactive console menu and application lifecycle
