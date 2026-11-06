@@ -4,5 +4,5 @@ Open shortcuts and placeholders. Each item comes from the `tech-debt.md` of a ta
 
 | ID | Location | Description | Removed by | Status |
 | --- | --- | --- | --- | --- |
-| TD-project-foundation-1 | `project_ppoo/src/main/java/ro/ase/multimedia/Main.java:18` | `Main.main` prints startup banner only; full interactive lifecycle requires `LocationRepository`, `MultimediaCatalog`, and `ConsoleMenu` | `console-menu-app` | open |
+| TD-project-foundation-1 | `project_ppoo/src/main/java/ro/ase/multimedia/Main.java:18` | `Main.main` prints startup banner only; full interactive lifecycle requires `LocationRepository`, `MultimediaCatalog`, and `ConsoleMenu` | `console-menu-app` | resolved |
 | TD-location-management-1 | `project_ppoo/src/main/java/ro/ase/multimedia/service/MultimediaCatalog.java:30` | 1D/2D array recalculation (`StatisticsCalculator`) and binary/report persistence (`BinaryCatalogStorage`, `ReportExporter`) are deferred to the next task (`MultimediaScanner` resolved in `multimedia-scanner-filter`) | `statistics-and-reports` | resolved |
