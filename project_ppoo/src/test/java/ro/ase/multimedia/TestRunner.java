@@ -1,8 +1,13 @@
 package ro.ase.multimedia;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Optional;
+import java.util.stream.Stream;
 import ro.ase.multimedia.exception.DuplicateLocationException;
 import ro.ase.multimedia.exception.InvalidDirectoryException;
 import ro.ase.multimedia.exception.LocationNotFoundException;
@@ -12,6 +17,8 @@ import ro.ase.multimedia.model.DirectoryStatus;
 import ro.ase.multimedia.model.MediaType;
 import ro.ase.multimedia.model.MonitoredDirectory;
 import ro.ase.multimedia.model.MultimediaFile;
+import ro.ase.multimedia.service.MultimediaCatalog;
+import ro.ase.multimedia.storage.LocationRepository;
 
 /**
  * Self-contained automated unit test runner for the Multimedia File Manager.
@@ -46,6 +53,22 @@ public final class TestRunner {
                 TestRunner::customExceptions_preserveMessageAndCauseInHierarchy);
         runTest("T8 main_runsFoundationEntryPointCleanly",
                 TestRunner::main_runsFoundationEntryPointCleanly);
+        runTest("T9 locationRepository_loadCreatesMissingFileAndParsesValidLinesWithWarningsForMalformed",
+                TestRunner::locationRepository_loadCreatesMissingFileAndParsesValidLinesWithWarningsForMalformed);
+        runTest("T10 locationRepository_saveWritesUtf8LinesAtomicallyAndCleansUpTempFile",
+                TestRunner::locationRepository_saveWritesUtf8LinesAtomicallyAndCleansUpTempFile);
+        runTest("T11 catalog_initializeRestoresDeduplicatedDirectoriesAndClassifiesStatusesWithWarnings",
+                TestRunner::catalog_initializeRestoresDeduplicatedDirectoriesAndClassifiesStatusesWithWarnings);
+        runTest("T12 catalog_addDirectoryAddsAccessibleDirectoryAndPersistsToLocationsFile",
+                TestRunner::catalog_addDirectoryAddsAccessibleDirectoryAndPersistsToLocationsFile);
+        runTest("T13 catalog_addDirectoryRejectsInvalidMissingFileOrDuplicatePaths",
+                TestRunner::catalog_addDirectoryRejectsInvalidMissingFileOrDuplicatePaths);
+        runTest("T14 catalog_removeDirectoryDeletesReferenceOnlyAndKeepsDiskFilesIntact",
+                TestRunner::catalog_removeDirectoryDeletesReferenceOnlyAndKeepsDiskFilesIntact);
+        runTest("T15 catalog_removeDirectoryRejectsUnmonitoredOrBlankPath",
+                TestRunner::catalog_removeDirectoryRejectsUnmonitoredOrBlankPath);
+        runTest("T16 catalog_saveAllOnExitRefreshesStatusesAndFlushesCurrentListToDisk",
+                TestRunner::catalog_saveAllOnExitRefreshesStatusesAndFlushesCurrentListToDisk);
 
         System.out.printf("Tests complete: %d passed, %d failed.%n", passed, failed);
         if (failed > 0) {
@@ -210,5 +233,276 @@ public final class TestRunner {
 
     private static void main_runsFoundationEntryPointCleanly() {
         Main.main(new String[0]);
+    }
+
+    private static void deleteRecursively(Path root) {
+        if (root == null || !Files.exists(root)) {
+            return;
+        }
+        try (Stream<Path> walk = Files.walk(root)) {
+            List<Path> paths = walk.sorted(Comparator.reverseOrder()).toList();
+            for (Path path : paths) {
+                Files.deleteIfExists(path);
+            }
+        } catch (IOException ex) {
+            throw new RuntimeException("Failed to clean up temp directory: " + root, ex);
+        }
+    }
+
+    private static void locationRepository_loadCreatesMissingFileAndParsesValidLinesWithWarningsForMalformed() {
+        Path tempRoot = null;
+        try {
+            tempRoot = Files.createTempDirectory("multimedia-test-t9-");
+            Path locationsFile = tempRoot.resolve("nested").resolve("locations.txt");
+            LocationRepository repo = new LocationRepository(locationsFile);
+
+            assertEquals(locationsFile.toAbsolutePath().normalize(), repo.getLocationsFile(), "Normalized locationsFile path");
+            LocationRepository.LoadResult initialLoad = repo.load();
+            assertTrue(Files.exists(locationsFile), "Missing locations.txt is created automatically");
+            assertEquals(0, initialLoad.paths().size(), "Empty paths on newly created file");
+            assertEquals(0, initialLoad.warnings().size(), "No warnings on newly created file");
+
+            Path dirA = Files.createDirectory(tempRoot.resolve("music"));
+            Path dirB = Files.createDirectory(tempRoot.resolve("photos"));
+            String content = "   \n  " + dirA + "  \ninvalid\0path\n" + dirB.resolve("sub").resolve("..") + "\n";
+            Files.writeString(locationsFile, content, StandardCharsets.UTF_8);
+
+            LocationRepository.LoadResult secondLoad = repo.load();
+            assertEquals(2, secondLoad.paths().size(), "Two valid paths loaded");
+            assertEquals(dirA.toAbsolutePath().normalize(), secondLoad.paths().get(0), "First path normalized");
+            assertEquals(dirB.toAbsolutePath().normalize(), secondLoad.paths().get(1), "Second path normalized");
+            assertEquals(1, secondLoad.warnings().size(), "One warning recorded for malformed line");
+        } catch (IOException ex) {
+            throw new RuntimeException(ex);
+        } finally {
+            deleteRecursively(tempRoot);
+        }
+    }
+
+    private static void locationRepository_saveWritesUtf8LinesAtomicallyAndCleansUpTempFile() {
+        Path tempRoot = null;
+        try {
+            tempRoot = Files.createTempDirectory("multimedia-test-t10-");
+            Path locationsFile = tempRoot.resolve("locations.txt");
+            LocationRepository repo = new LocationRepository(locationsFile);
+
+            Path dirA = tempRoot.resolve("dirA");
+            Path dirB = tempRoot.resolve("dirB").resolve("inner").resolve("..");
+            List<MonitoredDirectory> dirs = List.of(
+                    new MonitoredDirectory(dirA, DirectoryStatus.ACCESSIBLE, "2026-11-06T12:00:00Z"),
+                    new MonitoredDirectory(dirB, DirectoryStatus.MISSING, "2026-11-06T12:01:00Z")
+            );
+
+            repo.save(dirs);
+            Path tempSibling = locationsFile.resolveSibling("locations.txt.tmp");
+            assertTrue(Files.exists(locationsFile), "locations.txt exists after save");
+            assertTrue(!Files.exists(tempSibling), "No leftover .tmp file after save");
+
+            List<String> lines = Files.readAllLines(locationsFile, StandardCharsets.UTF_8);
+            assertEquals(2, lines.size(), "Two lines written");
+            assertEquals(dirA.toAbsolutePath().normalize().toString(), lines.get(0), "First saved line matches normalized dirA");
+            assertEquals(dirB.toAbsolutePath().normalize().toString(), lines.get(1), "Second saved line matches normalized dirB");
+
+            Path directoryTarget = Files.createDirectory(tempRoot.resolve("dir-as-file"));
+            LocationRepository failingRepo = new LocationRepository(directoryTarget);
+            assertThrows(StorageOperationException.class,
+                    () -> failingRepo.save(dirs),
+                    "Saving over a directory throws StorageOperationException");
+            assertTrue(!Files.exists(directoryTarget.resolveSibling("dir-as-file.tmp")),
+                    "Failed save cleans up temporary sibling file");
+        } catch (IOException ex) {
+            throw new RuntimeException(ex);
+        } finally {
+            deleteRecursively(tempRoot);
+        }
+    }
+
+    private static void catalog_initializeRestoresDeduplicatedDirectoriesAndClassifiesStatusesWithWarnings() {
+        Path tempRoot = null;
+        try {
+            tempRoot = Files.createTempDirectory("multimedia-test-t11-");
+            Path accessibleDir = Files.createDirectory(tempRoot.resolve("accessible"));
+            Path missingDir = tempRoot.resolve("missing");
+            Path regularFile = Files.writeString(tempRoot.resolve("not-a-dir.mp3"), "audio", StandardCharsets.UTF_8);
+
+            Path locationsFile = tempRoot.resolve("locations.txt");
+            List<String> rawEntries = List.of(
+                    accessibleDir.toString(),
+                    accessibleDir.resolve("sub").resolve("..").toString(),
+                    missingDir.toString(),
+                    regularFile.toString()
+            );
+            Files.write(locationsFile, rawEntries, StandardCharsets.UTF_8);
+
+            MultimediaCatalog catalog = new MultimediaCatalog(new LocationRepository(locationsFile));
+            List<String> warnings = catalog.initialize();
+            List<MonitoredDirectory> restored = catalog.getMonitoredDirectories();
+
+            assertEquals(3, restored.size(), "Three unique entries restored after deduplication");
+            assertEquals(DirectoryStatus.ACCESSIBLE, restored.get(0).getStatus(), "Existing directory is ACCESSIBLE");
+            assertEquals(DirectoryStatus.MISSING, restored.get(1).getStatus(), "Non-existent directory is MISSING");
+            assertEquals(DirectoryStatus.INACCESSIBLE, restored.get(2).getStatus(), "Regular file is classified as INACCESSIBLE");
+            assertEquals(3, warnings.size(), "Warnings emitted for duplicate, missing, and inaccessible entries");
+        } catch (IOException ex) {
+            throw new RuntimeException(ex);
+        } finally {
+            deleteRecursively(tempRoot);
+        }
+    }
+
+    private static void catalog_addDirectoryAddsAccessibleDirectoryAndPersistsToLocationsFile() {
+        Path tempRoot = null;
+        try {
+            tempRoot = Files.createTempDirectory("multimedia-test-t12-");
+            Path locationsFile = tempRoot.resolve("locations.txt");
+            Path mediaDir = Files.createDirectory(tempRoot.resolve("albums"));
+
+            MultimediaCatalog catalog = new MultimediaCatalog(new LocationRepository(locationsFile));
+            catalog.initialize();
+
+            MonitoredDirectory added = catalog.addDirectory("  " + mediaDir.resolve("nested").resolve("..") + "  ");
+            assertEquals(mediaDir.toAbsolutePath().normalize(), added.getPath(), "Added directory path is normalized");
+            assertEquals(DirectoryStatus.ACCESSIBLE, added.getStatus(), "Added directory status is ACCESSIBLE");
+            assertEquals(1, catalog.getMonitoredDirectories().size(), "In-memory catalog has 1 entry");
+
+            List<String> persistedLines = Files.readAllLines(locationsFile, StandardCharsets.UTF_8);
+            assertEquals(1, persistedLines.size(), "locations.txt immediately updated with 1 line");
+            assertEquals(mediaDir.toAbsolutePath().normalize().toString(), persistedLines.get(0), "Persisted path matches");
+        } catch (IOException ex) {
+            throw new RuntimeException(ex);
+        } finally {
+            deleteRecursively(tempRoot);
+        }
+    }
+
+    private static void catalog_addDirectoryRejectsInvalidMissingFileOrDuplicatePaths() {
+        Path tempRoot = null;
+        try {
+            tempRoot = Files.createTempDirectory("multimedia-test-t13-");
+            Path locationsFile = tempRoot.resolve("locations.txt");
+            Path validDir = Files.createDirectory(tempRoot.resolve("valid"));
+            Path missingDir = tempRoot.resolve("does-not-exist");
+            Path regularFile = Files.writeString(tempRoot.resolve("track.mp3"), "data", StandardCharsets.UTF_8);
+
+            MultimediaCatalog catalog = new MultimediaCatalog(new LocationRepository(locationsFile));
+            catalog.initialize();
+
+            assertThrows(InvalidDirectoryException.class,
+                    () -> catalog.addDirectory("   "),
+                    "Blank path rejected with InvalidDirectoryException");
+            assertThrows(InvalidDirectoryException.class,
+                    () -> catalog.addDirectory(null),
+                    "Null path rejected with InvalidDirectoryException");
+            assertThrows(InvalidDirectoryException.class,
+                    () -> catalog.addDirectory("bad\0path"),
+                    "Invalid syntax rejected with InvalidDirectoryException");
+            assertThrows(InvalidDirectoryException.class,
+                    () -> catalog.addDirectory(missingDir.toString()),
+                    "Non-existent directory rejected with InvalidDirectoryException");
+            assertThrows(InvalidDirectoryException.class,
+                    () -> catalog.addDirectory(regularFile.toString()),
+                    "Regular file rejected with InvalidDirectoryException");
+
+            catalog.addDirectory(validDir.toString());
+            assertThrows(DuplicateLocationException.class,
+                    () -> catalog.addDirectory(validDir.resolve("sub").resolve("..").toString()),
+                    "Normalized duplicate path rejected with DuplicateLocationException");
+            assertEquals(1, catalog.getMonitoredDirectories().size(), "Catalog still holds only the single valid directory");
+        } catch (IOException ex) {
+            throw new RuntimeException(ex);
+        } finally {
+            deleteRecursively(tempRoot);
+        }
+    }
+
+    private static void catalog_removeDirectoryDeletesReferenceOnlyAndKeepsDiskFilesIntact() {
+        Path tempRoot = null;
+        try {
+            tempRoot = Files.createTempDirectory("multimedia-test-t14-");
+            Path locationsFile = tempRoot.resolve("locations.txt");
+            Path mediaDir = Files.createDirectory(tempRoot.resolve("library"));
+            Path sampleMp3 = Files.writeString(mediaDir.resolve("song.mp3"), "mp3-bytes", StandardCharsets.UTF_8);
+            Path ephemeralDir = Files.createDirectory(tempRoot.resolve("ephemeral"));
+
+            MultimediaCatalog catalog = new MultimediaCatalog(new LocationRepository(locationsFile));
+            catalog.initialize();
+            catalog.addDirectory(mediaDir.toString());
+            catalog.addDirectory(ephemeralDir.toString());
+
+            MonitoredDirectory removed = catalog.removeDirectory(mediaDir.toString());
+            assertEquals(mediaDir.toAbsolutePath().normalize(), removed.getPath(), "Removed directory matches mediaDir");
+            assertEquals(1, catalog.getMonitoredDirectories().size(), "One directory remains in memory");
+            assertTrue(Files.exists(mediaDir), "Physical directory on disk is untouched (S3)");
+            assertTrue(Files.exists(sampleMp3), "Multimedia file inside removed directory is untouched (S3)");
+            assertEquals("mp3-bytes", Files.readString(sampleMp3, StandardCharsets.UTF_8), "File content intact");
+
+            Files.delete(ephemeralDir);
+            catalog.refreshDirectoryStatuses();
+            assertEquals(DirectoryStatus.MISSING, catalog.getMonitoredDirectories().get(0).getStatus(), "Deleted dir marked MISSING");
+
+            catalog.removeDirectory(ephemeralDir.toString());
+            assertEquals(0, catalog.getMonitoredDirectories().size(), "MISSING directory can also be removed cleanly");
+            assertEquals(0, Files.readAllLines(locationsFile, StandardCharsets.UTF_8).size(), "locations.txt is now empty");
+        } catch (IOException ex) {
+            throw new RuntimeException(ex);
+        } finally {
+            deleteRecursively(tempRoot);
+        }
+    }
+
+    private static void catalog_removeDirectoryRejectsUnmonitoredOrBlankPath() {
+        Path tempRoot = null;
+        try {
+            tempRoot = Files.createTempDirectory("multimedia-test-t15-");
+            Path locationsFile = tempRoot.resolve("locations.txt");
+            Path unmonitoredDir = Files.createDirectory(tempRoot.resolve("unmonitored"));
+
+            MultimediaCatalog catalog = new MultimediaCatalog(new LocationRepository(locationsFile));
+            catalog.initialize();
+
+            assertThrows(InvalidDirectoryException.class,
+                    () -> catalog.removeDirectory("  "),
+                    "Blank path on remove throws InvalidDirectoryException");
+            assertThrows(LocationNotFoundException.class,
+                    () -> catalog.removeDirectory(unmonitoredDir.toString()),
+                    "Unmonitored directory throws LocationNotFoundException");
+        } catch (IOException ex) {
+            throw new RuntimeException(ex);
+        } finally {
+            deleteRecursively(tempRoot);
+        }
+    }
+
+    private static void catalog_saveAllOnExitRefreshesStatusesAndFlushesCurrentListToDisk() {
+        Path tempRoot = null;
+        try {
+            tempRoot = Files.createTempDirectory("multimedia-test-t16-");
+            Path locationsFile = tempRoot.resolve("locations.txt");
+            Path dirOne = Files.createDirectory(tempRoot.resolve("one"));
+            Path dirTwo = Files.createDirectory(tempRoot.resolve("two"));
+
+            MultimediaCatalog catalog = new MultimediaCatalog(new LocationRepository(locationsFile));
+            catalog.initialize();
+            catalog.addDirectory(dirOne.toString());
+            catalog.addDirectory(dirTwo.toString());
+
+            Files.delete(dirTwo);
+            Files.writeString(locationsFile, "corrupted-external-edit\n", StandardCharsets.UTF_8);
+
+            catalog.saveAllOnExit();
+
+            List<MonitoredDirectory> current = catalog.getMonitoredDirectories();
+            assertEquals(DirectoryStatus.ACCESSIBLE, current.get(0).getStatus(), "dirOne remains ACCESSIBLE");
+            assertEquals(DirectoryStatus.MISSING, current.get(1).getStatus(), "dirTwo refreshed to MISSING on exit");
+
+            List<String> savedLines = Files.readAllLines(locationsFile, StandardCharsets.UTF_8);
+            assertEquals(2, savedLines.size(), "saveAllOnExit flushes authoritative in-memory list to locations.txt");
+            assertEquals(dirOne.toAbsolutePath().normalize().toString(), savedLines.get(0), "First saved path");
+            assertEquals(dirTwo.toAbsolutePath().normalize().toString(), savedLines.get(1), "Second saved path");
+        } catch (IOException ex) {
+            throw new RuntimeException(ex);
+        } finally {
+            deleteRecursively(tempRoot);
+        }
     }
 }
