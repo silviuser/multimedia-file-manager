@@ -114,6 +114,12 @@ public final class TestRunner {
                 TestRunner::consoleMenu_handlesInvalidMenuOptionsPathsAndFiltersWithErrorMessagesWithoutCrashing);
         runTest("T34 consoleMenu_andMainRejectNullConstructorAndRunArguments",
                 TestRunner::consoleMenu_andMainRejectNullConstructorAndRunArguments);
+        runTest("T35 packageInfo_existsWithJavadocCommentInAllSixPackages",
+                TestRunner::packageInfo_existsWithJavadocCommentInAllSixPackages);
+        runTest("T36 javadocScript_andReadmeDocumentManualVerificationForAllMenuOptionsAndPersistenceFiles",
+                TestRunner::javadocScript_andReadmeDocumentManualVerificationForAllMenuOptionsAndPersistenceFiles);
+        runTest("T37 projectDocumentation_containsRomanianCourseReportWithAllRequirementsPackagesClassesAndWordExport",
+                TestRunner::projectDocumentation_containsRomanianCourseReportWithAllRequirementsPackagesClassesAndWordExport);
 
         System.out.printf("Tests complete: %d passed, %d failed.%n", passed, failed);
         if (failed > 0) {
@@ -1345,6 +1351,116 @@ public final class TestRunner {
             throw new RuntimeException(ex);
         } finally {
             deleteRecursively(tempRoot);
+        }
+    }
+
+    private static Path resolveRepoRoot() {
+        return Files.exists(Path.of("project_ppoo"))
+                ? Path.of(".").toAbsolutePath().normalize()
+                : Path.of("..").toAbsolutePath().normalize();
+    }
+
+    private static void packageInfo_existsWithJavadocCommentInAllSixPackages() {
+        try {
+            Path srcMain = resolveRepoRoot().resolve("project_ppoo/src/main/java/ro/ase/multimedia");
+            Map<Path, String> expectedPackages = Map.of(
+                    srcMain.resolve("package-info.java"), "package ro.ase.multimedia;",
+                    srcMain.resolve("model/package-info.java"), "package ro.ase.multimedia.model;",
+                    srcMain.resolve("exception/package-info.java"), "package ro.ase.multimedia.exception;",
+                    srcMain.resolve("storage/package-info.java"), "package ro.ase.multimedia.storage;",
+                    srcMain.resolve("service/package-info.java"), "package ro.ase.multimedia.service;",
+                    srcMain.resolve("ui/package-info.java"), "package ro.ase.multimedia.ui;"
+            );
+
+            for (Map.Entry<Path, String> entry : expectedPackages.entrySet()) {
+                Path file = entry.getKey();
+                assertTrue(Files.isRegularFile(file), "package-info.java exists: " + file);
+                String content = Files.readString(file, StandardCharsets.UTF_8);
+                assertTrue(content.contains("/**") && content.contains("*/"),
+                        "package-info.java contains JavaDoc comment block: " + file);
+                assertTrue(content.contains(entry.getValue()),
+                        "package-info.java declares expected package: " + entry.getValue());
+            }
+        } catch (IOException ex) {
+            throw new RuntimeException(ex);
+        }
+    }
+
+    private static void javadocScript_andReadmeDocumentManualVerificationForAllMenuOptionsAndPersistenceFiles() {
+        try {
+            Path repoRoot = resolveRepoRoot();
+            Path javadocScript = repoRoot.resolve("scripts/javadoc.sh");
+            assertTrue(Files.isRegularFile(javadocScript), "scripts/javadoc.sh exists");
+            String scriptContent = Files.readString(javadocScript, StandardCharsets.UTF_8);
+            assertTrue(scriptContent.contains("-Xdoclint:all -Werror"),
+                    "scripts/javadoc.sh enforces -Xdoclint:all -Werror");
+            assertTrue(scriptContent.contains("../docs/javadoc"),
+                    "scripts/javadoc.sh outputs HTML JavaDoc into docs/javadoc/");
+
+            Path readme = repoRoot.resolve("README.md");
+            assertTrue(Files.isRegularFile(readme), "README.md exists");
+            String readmeContent = Files.readString(readme, StandardCharsets.UTF_8);
+            assertTrue(readmeContent.contains("./scripts/javadoc.sh"),
+                    "README.md documents ./scripts/javadoc.sh");
+            assertTrue(readmeContent.contains("## Manual Console Verification"),
+                    "README.md contains Manual Console Verification section");
+            assertTrue(readmeContent.contains("./scripts/run.sh"),
+                    "README.md manual verification runs ./scripts/run.sh");
+            for (String requiredToken : List.of(
+                    ".mp3", ".wav", ".jpg", ".png",
+                    "locations.txt", "reports/multimedia-report.txt", "data/catalog.bin",
+                    "AUDIO", "1", "2", "3", "4", "5", "6", "0")) {
+                assertTrue(readmeContent.contains(requiredToken),
+                        "README.md manual verification covers token: " + requiredToken);
+            }
+        } catch (IOException ex) {
+            throw new RuntimeException(ex);
+        }
+    }
+
+    private static void projectDocumentation_containsRomanianCourseReportWithAllRequirementsPackagesClassesAndWordExport() {
+        try {
+            Path docFile = resolveRepoRoot().resolve("docs/PROJECT_DOCUMENTATION.md");
+            assertTrue(Files.isRegularFile(docFile), "docs/PROJECT_DOCUMENTATION.md exists");
+            String content = Files.readString(docFile, StandardCharsets.UTF_8);
+
+            for (String reqId : List.of(
+                    "G1", "G2", "G3", "G4", "G5", "G6", "G7", "G8", "G9",
+                    "S1", "S2", "S3", "S4", "S5", "S6")) {
+                assertTrue(content.contains(reqId),
+                        "docs/PROJECT_DOCUMENTATION.md traces requirement: " + reqId);
+            }
+
+            for (String pkg : List.of(
+                    "ro.ase.multimedia",
+                    "ro.ase.multimedia.model",
+                    "ro.ase.multimedia.exception",
+                    "ro.ase.multimedia.storage",
+                    "ro.ase.multimedia.service",
+                    "ro.ase.multimedia.ui")) {
+                assertTrue(content.contains(pkg),
+                        "docs/PROJECT_DOCUMENTATION.md documents package: " + pkg);
+            }
+
+            for (String typeName : List.of(
+                    "Main", "MediaType", "DirectoryStatus", "MonitoredDirectory", "MultimediaFile",
+                    "MultimediaException", "InvalidDirectoryException", "DuplicateLocationException",
+                    "LocationNotFoundException", "StorageOperationException",
+                    "LocationRepository", "BinaryCatalogStorage", "ReportExporter",
+                    "MultimediaScanner", "StatisticsCalculator", "MultimediaCatalog", "ConsoleMenu")) {
+                assertTrue(content.contains(typeName),
+                        "docs/PROJECT_DOCUMENTATION.md documents type: " + typeName);
+            }
+
+            for (String dataAndExportToken : List.of(
+                    "countsByExtension", "bytesByExtension", "directoryExtensionMatrix",
+                    "locations.txt", "multimedia-report.txt", "catalog.bin",
+                    "0x4D464D43", ".docx", "pandoc")) {
+                assertTrue(content.contains(dataAndExportToken),
+                        "docs/PROJECT_DOCUMENTATION.md covers token: " + dataAndExportToken);
+            }
+        } catch (IOException ex) {
+            throw new RuntimeException(ex);
         }
     }
 }
