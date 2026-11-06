@@ -44,6 +44,8 @@ public final class TestRunner {
                 TestRunner::multimediaFile_rejectsNegativeSizeUnsupportedExtensionOrMismatchedMediaType);
         runTest("T7 customExceptions_preserveMessageAndCauseInHierarchy",
                 TestRunner::customExceptions_preserveMessageAndCauseInHierarchy);
+        runTest("T8 main_runsFoundationEntryPointCleanly",
+                TestRunner::main_runsFoundationEntryPointCleanly);
 
         System.out.printf("Tests complete: %d passed, %d failed.%n", passed, failed);
         if (failed > 0) {
@@ -204,5 +206,9 @@ public final class TestRunner {
         StorageOperationException storage = new StorageOperationException("Storage failed", rootCause);
         assertEquals("Storage failed", storage.getMessage(), "StorageOperationException message");
         assertEquals(rootCause, storage.getCause(), "StorageOperationException cause");
+    }
+
+    private static void main_runsFoundationEntryPointCleanly() {
+        Main.main(new String[0]);
     }
 }
