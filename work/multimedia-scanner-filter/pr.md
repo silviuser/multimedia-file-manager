@@ -4,7 +4,7 @@ artifact: pr
 branch: multimedia-scanner-filter
 base: main
 updated_commit: none
-pr: not created
+pr: https://github.com/silviuser/multimedia-file-manager/pull/3
 ---
 
 # feat(service): add multimedia directory scanner and catalog file filtering
