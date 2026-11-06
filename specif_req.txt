@@ -1,0 +1,51 @@
+Tema 4 – Aplicație Java pentru gestiunea fișierelor multimedia
+Să se dezvolte o aplicație Java care să permită gestionarea fișierelor multimedia existente în
+anumite directoare de pe hard disk. Aplicația va monitoriza una sau mai multe locații
+(directoare) indicate de utilizator. Lista directoarelor monitorizate va fi păstrată într-un fișier
+text aflat în folderul aplicației.
+Cerințe principale:
+1. Gestionarea directoarelor monitorizate
+o Aplicația trebuie să permită vizualizarea listei de directoare monitorizate.
+o Utilizatorul trebuie să poată adăuga un director nou în lista locațiilor
+monitorizate.
+o Utilizatorul trebuie să poată elimina un director din lista locațiilor monitorizate.
+o Adăugarea sau eliminarea unui director trebuie să actualizeze automat fișierul
+text care conține lista locațiilor.
+2. Fișierul cu locațiile monitorizate
+o Lista directoarelor va fi stocată într-un fișier text aflat în folderul aplicației.
+o Fiecare locație va fi identificată prin calea către directorul respectiv.
+o La pornirea aplicației, lista locațiilor trebuie încărcată din fișier.
+o La modificarea listei, fișierul trebuie actualizat.
+3. Important privind ștergerea unei locații
+o Atunci când utilizatorul elimină o locație din aplicație, se va șterge doar
+referința către acel director din fișierul text.
+o Directorul și fișierele existente în acesta nu vor fi șterse de pe hard disk.
+4. Gestionarea fișierelor multimedia: aplicația trebuie să identifice și să gestioneze
+fișierele multimedia din directoarele monitorizate.
+Vor fi luate în considerare cel puțin următoarele formate:
+o audio: .mp3, .wav;
+o imagini: .jpg, .png.
+Aplicația poate permite, în funcție de cerințele implementării:
+o afișarea fișierelor multimedia găsite;
+o identificarea tipului fișierului;
+o afișarea informațiilor despre fișier, precum nume, extensie, dimensiune și
+locație;
+o filtrarea fișierelor după tip sau extensie.
+5. Meniul aplicației: aplicația va avea un meniu prin intermediul căruia utilizatorul să
+poată realiza operațiile principale, precum:
+o afișarea directoarelor monitorizate;
+o adăugarea unei locații;
+o ștergerea unei locații;
+o afișarea fișierelor multimedia din locațiile monitorizate;
+o filtrarea sau căutarea fișierelor multimedia;
+o ieșirea din aplicație.
+6. Gestionarea erorilor
+o Aplicația trebuie să verifice dacă locația introdusă de utilizator există și
+reprezintă un director valid.
+o Trebuie tratate situațiile în care fișierul cu locații nu există, nu poate fi citit sau
+nu poate fi modificat.
+o Aplicația trebuie să gestioneze corespunzător situațiile în care un director
+monitorizat nu mai există sau nu poate fi accesat.
+Aplicația trebuie să ofere un mecanism simplu de monitorizare și gestionare a fișierelor
+multimedia din mai multe locații de pe hard disk, demonstrând utilizarea în Java a fișierelor,
+directoarelor, operațiilor de I/O, lucrului cu căi și extensii de fișiere și gestionării excepțiilor.

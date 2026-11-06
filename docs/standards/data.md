@@ -1,31 +1,41 @@
-# Data standards
+# Data and persistence standards
 
-Scope: persistence, in a local JSON file and in Cloud Firestore. Rule IDs (`DATA-<n>`) are cited in plans, critiques and reviews. The rules come from the PWCC course: [Google Cloud Firestore](https://mihai-gheorghe.gitbook.io/pwcc-suport-curs/firebase/cloud-firestore) and [CRUD operations](https://mihai-gheorghe.gitbook.io/pwcc-suport-curs/firebase/operatii-crud).
+Scope: in-memory state management and file I/O (`locations.txt`, binary snapshots, text reports). Rule IDs (`DATA-<n>`) are cited in plans, critiques and reviews.
 
-## DATA-1. All persistence goes through the storage module
+## DATA-1. All file I/O goes through the `storage` package
 
-Routes and business logic call storage functions; they never read files or call Firestore directly. Changing the storage (JSON file, then Firestore) does not change them.
+Services and UI classes never read or write persistence files directly. They call `LocationRepository` for the monitored locations text file, `BinaryCatalogStorage` for binary state/statistics snapshots, and `ReportExporter` for formatted text reports (`G1`).
 
-## DATA-2. Storage functions are asynchronous and return plain objects
+## DATA-2. In-memory collections and arrays are authoritative (`G4`)
 
-Every storage function returns a promise. Records are plain objects with a string `id`, so the JSON file and Firestore return the same shapes.
+During program execution, all additions, removals, scans and recalculations happen in memory inside `MultimediaCatalog` (updating `List<MonitoredDirectory>`, `List<MultimediaFile>`, `Map<MediaType, List<MultimediaFile>>`, and the 1D/2D primitive arrays `int[]`, `long[]`, `long[][]`).
 
-## DATA-3. The JSON file is written safely
+## DATA-3. Dual-sync persistence for monitored locations (`G2`, `G4`, `S1`, `S2`)
 
-The file path comes from configuration (for example `DATA_FILE`), so tests use a temporary file. A write goes to a temporary file first, which then replaces the data file (`rename`), so a crash never leaves a half-written file. Writes from one process are serialized.
+To satisfy both `specif_req.txt` (`S1`, `S2`: adding or removing a directory automatically updates the text file) and `general_req.txt` (`G2`, `G4`: restoring data at startup and saving in-memory changes to the input file on application exit):
+- At startup, `MultimediaCatalog` restores the list of monitored directories from `locations.txt` (creating an empty file if it does not exist yet);
+- Adding or removing a directory updates the in-memory collection first and immediately synchronizes `locations.txt`;
+- At application exit, `MultimediaCatalog.saveAllOnExit()` writes the final in-memory directory list to `locations.txt` and saves the binary catalog snapshot (`catalog.bin`).
 
-## DATA-4. Firestore through one module
+## DATA-4. Safe atomic writes and UTF-8 encoding
 
-One module initializes the Admin SDK once and exports the database; the rest of the app imports it. Credentials come from `GOOGLE_APPLICATION_CREDENTIALS`; the emulator is selected with `FIRESTORE_EMULATOR_HOST`.
+Text files (`locations.txt`, `multimedia-report.txt`) use explicit `StandardCharsets.UTF_8`. Updating `locations.txt` writes to a sibling temporary file first and moves it over the target (`Files.move` with `REPLACE_EXISTING`), preventing file corruption on interrupted writes.
 
-## DATA-5. Check-then-write runs as one operation
+```java
+Path tempFile = targetFile.resolveSibling(targetFile.getFileName() + ".tmp");
+Files.write(tempFile, lines, StandardCharsets.UTF_8);
+Files.move(tempFile, targetFile, StandardCopyOption.REPLACE_EXISTING);
+```
 
-A rule like "the e-mail must be unique" is checked and written in the same operation: a Firestore transaction, or a single serialized read-modify-write of the JSON file. Otherwise two simultaneous requests can both pass the check.
+## DATA-5. Non-destructive location removal (`S3`)
 
-## DATA-6. Updates change only the given fields
+Removing a monitored location from the application **only** deletes its reference from the in-memory collections and from `locations.txt`. The directory on disk and the multimedia files inside it are **never** deleted, moved or modified (`S3`).
 
-A partial update changes the fields received and keeps the others; updating a record that does not exist is an error (404 in the API).
+## DATA-6. Both text and binary file persistence (`G1`)
 
-## DATA-7. Seed and test data are separate from real data
+- **Text persistence**: `locations.txt` stores one normalized directory path per line; `multimedia-report.txt` stores human-readable statistics tables generated from the 1D/2D primitive arrays and file collections.
+- **Binary persistence**: `BinaryCatalogStorage` writes and reads catalog metadata and primitive array statistics using `DataOutputStream` / `DataInputStream` (`catalog.bin`).
 
-Generated data (seed scripts, test fixtures) goes to its own file or emulator project and is never mixed with real data.
+## DATA-7. Configurable file paths for test isolation
+
+`LocationRepository`, `BinaryCatalogStorage` and `ReportExporter` accept their target `Path` via constructor injection. Production `Main` uses default paths in the application folder (`locations.txt`, `data/catalog.bin`, `reports/multimedia-report.txt`), while automated tests pass temporary paths inside `Files.createTempDirectory(...)`.

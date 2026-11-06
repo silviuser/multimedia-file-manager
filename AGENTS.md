@@ -4,46 +4,43 @@ Instructions for the coding agent working in this repository, for example Antigr
 
 ## Project
 
-Task API: a REST backend in Node.js and Express 5 with user registration, JWT authentication, authorization and CRUD over tasks. Data lives in a local JSON file first and in Cloud Firestore later. Read `README.md` and `docs/ARCHITECTURE.md` first.
-
-In the API, a task is a user's to-do (`/tasks`); in the workflow below, a task is a change to this repository.
+Multimedia File Manager (`Tema 4`): a Java 21 console application for monitoring directories on disk, cataloging and filtering multimedia files (`.mp3`, `.wav`, `.jpg`, `.png`), computing statistics in 1D/2D primitive arrays and object collections, and persisting state and reports to text (`locations.txt`, `reports/multimedia-report.txt`) and binary (`data/catalog.bin`) files. Read `README.md` and `docs/ARCHITECTURE.md` first, along with `general_req.txt` and `specif_req.txt`.
 
 All code, comments, documents and commit messages are in English.
 
 ## Commands
 
-The workflow skills use these commands by name. Run install first in a new checkout and whenever the dependencies change. The first roadmap item creates `package.json` with these scripts.
+The workflow skills use these commands by name. The first roadmap item (`project-foundation`) creates `./scripts/` with these commands so they work identically across Linux, WSL and Windows JDK installations.
 
 | Name | Command | Notes |
 | --- | --- | --- |
-| install | `npm ci` | installs the versions in `package-lock.json`; `npm install <package>@<version>` adds a dependency and creates the lock file if it is missing |
-| build | none | plain JavaScript, no build step |
-| test | `npm test` | runs all tests (`node:test`) and exits |
-| lint | `npm run lint` | ESLint; must report nothing |
-| start | `npm start` | starts the API; the port comes from `PORT` |
-| dev | `npm run dev` | like start, with `.env` loaded and a restart on every change |
+| install | `none` | standard Java 21 SDK (`java.nio.file`, `java.io`, `java.util`), no external runtime dependencies |
+| build | `./scripts/build.sh` | compiles `src/main/java` and `src/test/java` into `out/` |
+| test | `./scripts/test.sh` | compiles and runs all automated tests in `src/test/java` without interaction and exits |
+| lint | `./scripts/lint.sh` | runs `javac -Xlint:all -Werror` and `javadoc` check; must report nothing |
+| start | `./scripts/run.sh` | starts the interactive console application (`ro.ase.multimedia.Main`) |
 
-Configuration comes from environment variables, in development from `.env` (`node --env-file=.env`). Never commit `.env`, keys or `node_modules`.
+Runtime persistence files (`locations.txt`, `data/catalog.bin`, `reports/multimedia-report.txt`) and compiled artifacts (`out/`, `target/`, `docs/javadoc/`) are never committed.
 
 ## Git
 
 - Base branch: `main`. The skills call it `<base>`.
-- Code commits follow `docs/standards/`. Task files are committed as `docs(<slug>): …`.
+- Code commits follow `docs/standards/git.md`. Task files are committed as `docs(<slug>): …`.
 
 ## Project documents
 
 | Document | Content | Written by |
 | --- | --- | --- |
-| `README.md` | what the software does, how to install, run and test it | task-doc-updates |
-| `docs/ARCHITECTURE.md` | components, data model, decisions | task-doc-updates |
+| `README.md` | what the software does, how to build, run and test it | task-doc-updates |
+| `docs/ARCHITECTURE.md` | requirements traceability, components, data model, decisions | task-doc-updates |
 | `docs/ROADMAP.md` | planned and finished increments | task-doc-updates |
 | `docs/TECH_DEBT.md` | open shortcuts and placeholders | task-doc-updates |
 | `docs/KNOWN_ISSUES.md` | known bugs and limitations | task-doc-updates |
-| `docs/standards/*.md` | coding standards, with rule IDs | humans only |
+| `docs/standards/*.md` | coding standards (`java`, `data`, `cli`, `validation`, `testing`, `git`), with rule IDs | humans only |
 
 ## Workflow
 
-Every change is a task. task-scoping chooses its slug (kebab-case, for example `user-registration`) and creates a branch with the same name and the directory `work/<slug>/`. When the task is finished, task-doc-updates moves the directory to `work/done/<slug>/`.
+Every change is a task. task-scoping chooses its slug (kebab-case, for example `project-foundation`) and creates a branch with the same name and the directory `work/<slug>/`. When the task is finished, task-doc-updates moves the directory to `work/done/<slug>/`.
 
 A task goes through eight phases. Each phase is a skill in `.agents/skills/` and runs in a new agent session.
 
@@ -76,8 +73,8 @@ Loops: critique `changes-requested` goes back to task-planning; review `changes-
 
 A task is one logical increment: testable on its own, and every existing test still passes.
 
-- At most about 300 changed lines of production code and 10 files; tests, documents and generated files such as lock files do not count.
-- At most one new runtime dependency; development tools, such as a linter, do not count.
+- At most about 300 changed lines of production code and 10 files; tests, documents and generated files do not count.
+- At most one new runtime dependency; development tools do not count.
 - Tests are essential, not exhaustive: one test for the success path of each requirement, plus one for each error case that protects security or data. A requirement usually needs one to three tests.
 
 Larger work is split. A part that is not implemented yet is replaced by an explicit placeholder (a stub, a fake adapter, seeded dummy data, a monkey patch in tests), marked in code with `TODO(TD-<slug>-<n>)` and recorded in `work/<slug>/tech-debt.md`.

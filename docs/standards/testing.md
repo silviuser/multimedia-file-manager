@@ -1,50 +1,33 @@
 # Testing standards
 
-Scope: automated and manual tests. Rule IDs (`TEST-<n>`) are cited in plans, critiques and reviews. The rules come from the PWCC course: [Express](https://mihai-gheorghe.gitbook.io/pwcc-suport-curs/backend-in-javascript/express) ("Testarea API-ului") and [REST APIs](https://mihai-gheorghe.gitbook.io/pwcc-suport-curs/backend-in-javascript/api-rest) ("Testarea unui API din terminal").
+Scope: automated unit/integration tests in `src/test/java/` and manual verification scenarios. Rule IDs (`TEST-<n>`) are cited in plans, critiques and reviews.
 
-## TEST-1. node:test, assert and fetch
+## TEST-1. Automated self-contained test runner
 
-Tests use the built-in `node:test` and `node:assert/strict`, in `test/*.test.js`. `npm test` runs `node --test`. No other test framework.
+Tests live in `src/test/java/ro/ase/multimedia/` and run with a single command (`./scripts/test.sh`) that compiles main and test classes and executes all test suites, exiting with `0` when all assertions pass and non-zero on any failure. No external internet downloads are required to run tests.
 
-## TEST-2. HTTP tests start the app on a free port
+## TEST-2. Temporary directories for every file-system test (`S3`, `DATA-7`)
 
-```javascript
-const { test, before, after } = require("node:test");
-const assert = require("node:assert/strict");
-const { once } = require("node:events");
+Every test that touches directories, `locations.txt`, `catalog.bin`, or `multimedia-report.txt` creates its own isolated temporary directory with `Files.createTempDirectory("multimedia-test-")` and cleans it up after the test. Tests never read or modify the project's root `locations.txt` or real user folders.
 
-let server;
-let baseUrl;
+## TEST-3. Essential tests mapped to requirements
 
-before(async () => {
-  server = createApp(/* test configuration */).listen(0); // port 0: the system picks a free port
-  await once(server, "listening");
-  baseUrl = `http://localhost:${server.address().port}`;
-});
+For each requirement in `scope.md`:
+- One test for the success path (e.g., adding a valid directory updates memory and `locations.txt`; scanning finds `.mp3`, `.wav`, `.jpg`, `.png`; 1D and 2D primitive arrays match expected counts and byte totals);
+- One test for each critical validation/safety rule (e.g., removing a directory leaves files on disk intact `S3`; adding a non-existent path throws `InvalidDirectoryException`; missing monitored directory is marked `MISSING` without crashing `S6`).
 
-after(() => server.close());
-```
+## TEST-4. End-to-end CLI flow tests with in-memory streams
 
-## TEST-3. Essential tests only
+`ConsoleMenu` tests feed scripted user commands via `ByteArrayInputStream` and inspect output captured in `ByteArrayOutputStream`, verifying the full startup -> add location -> list files -> filter -> statistics -> exit & save cycle (`G6`, `G7`).
 
-For each requirement: the success path, and the error cases that protect security or data (401, 403, 409, invalid input that would corrupt data). No exhaustive input matrices; one test per behavior.
+## TEST-5. Descriptive test names
 
-## TEST-4. Independent tests
+Test methods clearly state the scenario and expected outcome, for example `removeDirectory_deletesReferenceOnlyAndKeepsDiskFilesIntact` or `scan_populatesOneDimensionalAndTwoDimensionalPrimitiveArrays`.
 
-Every test file uses its own temporary data (a temporary JSON file, a separate emulator project) and does not depend on the order of the tests. Test data never touches development or production data.
+## TEST-6. Existing tests keep passing
 
-## TEST-5. No real external services
+A task never deletes or weakens an existing test to make the suite pass. A test changes only when its requirement changed, and the plan states why.
 
-Firestore tests run on the Firestore emulator (`FIRESTORE_EMULATOR_HOST`). Tests do not call services on the Internet.
+## TEST-7. Repeatable manual verification
 
-## TEST-6. Test names describe behavior
-
-`"POST /auth/register with an e-mail already registered returns 409"`, not `"test 3"`.
-
-## TEST-7. Existing tests keep passing
-
-A task never deletes or weakens an existing test to make the suite pass. A test changes only when its requirement changed, and the plan says so.
-
-## TEST-8. Manual tests are repeatable
-
-Manual requests for an endpoint are kept in the repository, as curl commands in `README.md` or in an API collection (for example Postman), so that anyone can run them again.
+`README.md` documents step-by-step manual console verification commands so a user or evaluator can launch the app, exercise every menu option, and inspect `locations.txt`, `multimedia-report.txt`, and `catalog.bin`.

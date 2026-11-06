@@ -1,0 +1,20 @@
+1. Lucrul cu fișiere text sau binare pentru operații de salvare/restaurare date și pentru realizare
+statistici/rapoarte din aplicație (1 p);
+2. Asigurare mecanism de salvare a datelor la închiderea aplicației și restaurarea acestora la
+relansarea aplicației, prin actualizarea fișierului cu datele de intrare (1 p);
+3. Lucrul cu minim două masive uni/bidimensionale (vectori, matrici) de tipuri de date
+fundamentale și minim două colecții diferite de obiecte din clasele definite, în funcție de
+specificațiile proiectului (1 p);
+4. Toate modificările asupra datelor și obiectelor de lucru se fac în memorie, în cadrul
+vectorilor și colecțiilor definite, iar salvarea în fișier(e) se realizează la închiderea aplicației
+(1 p);
+5. Validarea datelor de lucru, atât cele citite de la consolă, cât și cele preluate din fișierele de
+intrare, utilizând mecanismul de gestiune a excepțiilor, atât prin folosirea claselor standard
+de excepții, cât și prin definirea de către programator a unor excepții specifice (1 p);
+6. Asigurarea unui flux funcțional logic al aplicației, din momentul deschiderii și încărcării
+cu date până la momentul închiderii acesteia (1 p);
+7. Implementarea unui meniu cu opțiuni clare oricărui utilizator pentru apelul anumitor
+funcționalități ale aplicației (1 p);
+8. Proiectul să fie complet funcțional, să nu conțină erori de compilare sau execuție (1 p);
+9. Realizarea unei documentații în Microsoft Word (care include și JavaDoc) aferentă
+proiectului, pe baza indicațiilor specificate la curs/seminar (1 p).
