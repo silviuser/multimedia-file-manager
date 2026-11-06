@@ -1,6 +1,9 @@
 package ro.ase.multimedia;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -24,6 +27,7 @@ import ro.ase.multimedia.service.StatisticsCalculator;
 import ro.ase.multimedia.storage.BinaryCatalogStorage;
 import ro.ase.multimedia.storage.LocationRepository;
 import ro.ase.multimedia.storage.ReportExporter;
+import ro.ase.multimedia.ui.ConsoleMenu;
 
 /**
  * Self-contained automated unit test runner for the Multimedia File Manager.
@@ -98,6 +102,18 @@ public final class TestRunner {
                 TestRunner::binaryCatalogStorage_throwsStorageOperationExceptionOnCorruptedFileOrWriteFailure);
         runTest("T28 catalog_updatesStatisticsOnLifecycleChangesExportsReportAndSavesBinaryOnExit",
                 TestRunner::catalog_updatesStatisticsOnLifecycleChangesExportsReportAndSavesBinaryOnExit);
+        runTest("T29 consoleMenu_initializesPrintsWarningsAndSavesStateOnZeroOrEofExit",
+                TestRunner::consoleMenu_initializesPrintsWarningsAndSavesStateOnZeroOrEofExit);
+        runTest("T30 consoleMenu_addsViewsAndRemovesDirectoriesByIndexAndPathKeepingDiskFilesIntact",
+                TestRunner::consoleMenu_addsViewsAndRemovesDirectoriesByIndexAndPathKeepingDiskFilesIntact);
+        runTest("T31 consoleMenu_displaysAllFilesAndFiltersByMediaTypeExtensionAndKeyword",
+                TestRunner::consoleMenu_displaysAllFilesAndFiltersByMediaTypeExtensionAndKeyword);
+        runTest("T32 consoleMenu_views1DAnd2DStatisticsAndExportsReportAndBinarySnapshot",
+                TestRunner::consoleMenu_views1DAnd2DStatisticsAndExportsReportAndBinarySnapshot);
+        runTest("T33 consoleMenu_handlesInvalidMenuOptionsPathsAndFiltersWithErrorMessagesWithoutCrashing",
+                TestRunner::consoleMenu_handlesInvalidMenuOptionsPathsAndFiltersWithErrorMessagesWithoutCrashing);
+        runTest("T34 consoleMenu_andMainRejectNullConstructorAndRunArguments",
+                TestRunner::consoleMenu_andMainRejectNullConstructorAndRunArguments);
 
         System.out.printf("Tests complete: %d passed, %d failed.%n", passed, failed);
         if (failed > 0) {
@@ -261,7 +277,26 @@ public final class TestRunner {
     }
 
     private static void main_runsFoundationEntryPointCleanly() {
-        Main.main(new String[0]);
+        Path tempRoot = null;
+        try {
+            tempRoot = Files.createTempDirectory("multimedia-test-t8-");
+            Path locationsFile = tempRoot.resolve("locations.txt");
+            ByteArrayInputStream in = new ByteArrayInputStream("0\n".getBytes(StandardCharsets.UTF_8));
+            ByteArrayOutputStream outBuffer = new ByteArrayOutputStream();
+            PrintStream out = new PrintStream(outBuffer, true, StandardCharsets.UTF_8);
+
+            Main.run(locationsFile, in, out);
+
+            String output = outBuffer.toString(StandardCharsets.UTF_8);
+            assertTrue(output.contains("=== Multimedia File Manager ==="), "Main.run prints header");
+            assertTrue(output.contains("State saved."), "Main.run saves state on exit");
+            assertTrue(Files.exists(locationsFile), "Main.run creates locations.txt");
+            assertTrue(Files.exists(tempRoot.resolve("data").resolve("catalog.bin")), "Main.run creates catalog.bin");
+        } catch (IOException ex) {
+            throw new RuntimeException(ex);
+        } finally {
+            deleteRecursively(tempRoot);
+        }
     }
 
     private static void deleteRecursively(Path root) {
@@ -1025,6 +1060,287 @@ public final class TestRunner {
             assertEquals(1, loaded.directories().size(), "1 directory in binary snapshot");
             assertEquals(1, loaded.files().size(), "1 file in binary snapshot");
             assertEquals(6L, loaded.statistics().getTotalBytes(), "6 bytes in binary snapshot");
+        } catch (IOException ex) {
+            throw new RuntimeException(ex);
+        } finally {
+            deleteRecursively(tempRoot);
+        }
+    }
+
+    private static void consoleMenu_initializesPrintsWarningsAndSavesStateOnZeroOrEofExit() {
+        Path tempRoot = null;
+        try {
+            tempRoot = Files.createTempDirectory("multimedia-test-t29-");
+            Path locationsFile = tempRoot.resolve("locations.txt");
+            Path binaryFile = tempRoot.resolve("data").resolve("catalog.bin");
+            Path missingDir = tempRoot.resolve("missing-folder");
+            Files.write(locationsFile, List.of(missingDir.toString()), StandardCharsets.UTF_8);
+
+            MultimediaCatalog catalog = new MultimediaCatalog(new LocationRepository(locationsFile));
+            ByteArrayInputStream in = new ByteArrayInputStream("0\n".getBytes(StandardCharsets.UTF_8));
+            ByteArrayOutputStream outBuffer = new ByteArrayOutputStream();
+            PrintStream out = new PrintStream(outBuffer, true, StandardCharsets.UTF_8);
+
+            ConsoleMenu menu = new ConsoleMenu(catalog, in, out);
+            menu.run();
+
+            String output = outBuffer.toString(StandardCharsets.UTF_8);
+            assertTrue(output.contains("=== Multimedia File Manager ==="), "Prints application header");
+            assertTrue(output.contains("[WARN] Monitored directory is missing on disk:"), "Prints startup warning");
+            assertTrue(output.contains("0 - Save state and exit"), "Prints numbered menu options");
+            assertTrue(output.contains("State saved."), "Prints exit confirmation");
+            assertTrue(Files.exists(binaryFile), "Saves binary snapshot on option 0 exit");
+
+            Path eofRoot = Files.createDirectory(tempRoot.resolve("eof-run"));
+            Path eofLocations = eofRoot.resolve("locations.txt");
+            Path eofBinary = eofRoot.resolve("data").resolve("catalog.bin");
+            MultimediaCatalog eofCatalog = new MultimediaCatalog(new LocationRepository(eofLocations));
+            ByteArrayInputStream eofIn = new ByteArrayInputStream(new byte[0]);
+            ByteArrayOutputStream eofOutBuffer = new ByteArrayOutputStream();
+            PrintStream eofOut = new PrintStream(eofOutBuffer, true, StandardCharsets.UTF_8);
+
+            new ConsoleMenu(eofCatalog, eofIn, eofOut).run();
+            assertTrue(Files.exists(eofLocations), "Creates locations.txt on EOF exit");
+            assertTrue(Files.exists(eofBinary), "Saves binary snapshot on EOF exit");
+        } catch (IOException ex) {
+            throw new RuntimeException(ex);
+        } finally {
+            deleteRecursively(tempRoot);
+        }
+    }
+
+    private static void consoleMenu_addsViewsAndRemovesDirectoriesByIndexAndPathKeepingDiskFilesIntact() {
+        Path tempRoot = null;
+        try {
+            tempRoot = Files.createTempDirectory("multimedia-test-t30-");
+            Path locationsFile = tempRoot.resolve("locations.txt");
+            Path dirA = Files.createDirectory(tempRoot.resolve("music"));
+            Path dirB = Files.createDirectory(tempRoot.resolve("photos"));
+            Path sampleMp3 = Files.writeString(dirA.resolve("song.mp3"), "audio-bytes", StandardCharsets.UTF_8);
+            Path sampleJpg = Files.writeString(dirB.resolve("pic.jpg"), "image-bytes", StandardCharsets.UTF_8);
+
+            String commands = String.join("\n",
+                    "1",
+                    "2", dirA.toString(),
+                    "2", dirB.toString(),
+                    "1",
+                    "3", "1",
+                    "3", dirB.toString(),
+                    "1",
+                    "0") + "\n";
+
+            MultimediaCatalog catalog = new MultimediaCatalog(new LocationRepository(locationsFile));
+            ByteArrayInputStream in = new ByteArrayInputStream(commands.getBytes(StandardCharsets.UTF_8));
+            ByteArrayOutputStream outBuffer = new ByteArrayOutputStream();
+            PrintStream out = new PrintStream(outBuffer, true, StandardCharsets.UTF_8);
+
+            new ConsoleMenu(catalog, in, out).run();
+
+            String output = outBuffer.toString(StandardCharsets.UTF_8);
+            assertTrue(output.contains("No monitored directories configured."), "Shows empty message when no dirs");
+            assertTrue(output.contains("Added monitored directory: " + dirA.toAbsolutePath().normalize()),
+                    "Confirms adding dirA");
+            assertTrue(output.contains("Added monitored directory: " + dirB.toAbsolutePath().normalize()),
+                    "Confirms adding dirB");
+            assertTrue(output.contains("[1] " + dirA.toAbsolutePath().normalize() + " | Status: ACCESSIBLE | Files: 1"),
+                    "Displays dirA with 1-based index, status, and file count");
+            assertTrue(output.contains("[2] " + dirB.toAbsolutePath().normalize() + " | Status: ACCESSIBLE | Files: 1"),
+                    "Displays dirB with 1-based index, status, and file count");
+            assertTrue(output.contains("Removed monitored directory reference (disk files kept intact): "
+                    + dirA.toAbsolutePath().normalize()), "Removes dirA by 1-based index");
+            assertTrue(output.contains("Removed monitored directory reference (disk files kept intact): "
+                    + dirB.toAbsolutePath().normalize()), "Removes dirB by path string");
+            assertEquals(0, catalog.getMonitoredDirectories().size(), "All directories removed from catalog");
+            assertTrue(Files.exists(sampleMp3), "dirA file on disk remains intact (S3)");
+            assertTrue(Files.exists(sampleJpg), "dirB file on disk remains intact (S3)");
+        } catch (IOException ex) {
+            throw new RuntimeException(ex);
+        } finally {
+            deleteRecursively(tempRoot);
+        }
+    }
+
+    private static void consoleMenu_displaysAllFilesAndFiltersByMediaTypeExtensionAndKeyword() {
+        Path tempRoot = null;
+        try {
+            tempRoot = Files.createTempDirectory("multimedia-test-t31-");
+            Path locationsFile = tempRoot.resolve("locations.txt");
+            Path mediaDir = Files.createDirectory(tempRoot.resolve("media"));
+            Files.write(mediaDir.resolve("Summer_Song.MP3"), new byte[2048]);
+            Files.write(mediaDir.resolve("alert.wav"), new byte[512]);
+            Files.write(mediaDir.resolve("Summer_Photo.png"), new byte[1024]);
+
+            String commands = String.join("\n",
+                    "4",
+                    "2", mediaDir.toString(),
+                    "4",
+                    "5", "1", "audio",
+                    "5", "2", "PNG",
+                    "5", "3", "summer",
+                    "5", "3", "nonexistent-keyword",
+                    "0") + "\n";
+
+            MultimediaCatalog catalog = new MultimediaCatalog(new LocationRepository(locationsFile));
+            ByteArrayInputStream in = new ByteArrayInputStream(commands.getBytes(StandardCharsets.UTF_8));
+            ByteArrayOutputStream outBuffer = new ByteArrayOutputStream();
+            PrintStream out = new PrintStream(outBuffer, true, StandardCharsets.UTF_8);
+
+            new ConsoleMenu(catalog, in, out).run();
+
+            String output = outBuffer.toString(StandardCharsets.UTF_8);
+            assertTrue(output.contains("No multimedia files found in monitored directories."),
+                    "Prints empty state message before directories are added");
+            assertTrue(output.contains("Multimedia Files (3):"), "Option 4 displays all 3 files");
+            assertTrue(output.contains("Summer_Song.MP3 | Ext: .mp3 | Type: AUDIO | Size: 2.00 KB (2048 bytes)"),
+                    "Formats file entry with name, extension, MediaType, human-readable and byte size");
+            assertTrue(output.contains("alert.wav | Ext: .wav | Type: AUDIO | Size: 512 B (512 bytes)"),
+                    "Formats sub-KB file size");
+            assertTrue(output.contains("Multimedia Files (2):"),
+                    "MediaType AUDIO filter and keyword 'summer' search return 2 files");
+            assertTrue(output.contains("Multimedia Files (1):"),
+                    "Extension 'PNG' filter returns 1 file");
+            assertTrue(output.contains("No multimedia files matched the filter criteria."),
+                    "Unmatched search prints informative message");
+        } catch (IOException ex) {
+            throw new RuntimeException(ex);
+        } finally {
+            deleteRecursively(tempRoot);
+        }
+    }
+
+    private static void consoleMenu_views1DAnd2DStatisticsAndExportsReportAndBinarySnapshot() {
+        Path tempRoot = null;
+        try {
+            tempRoot = Files.createTempDirectory("multimedia-test-t32-");
+            Path locationsFile = tempRoot.resolve("locations.txt");
+            Path reportFile = tempRoot.resolve("reports").resolve("multimedia-report.txt");
+            Path binaryFile = tempRoot.resolve("data").resolve("catalog.bin");
+            Path dirA = Files.createDirectory(tempRoot.resolve("dirA"));
+            Path dirB = Files.createDirectory(tempRoot.resolve("dirB"));
+            Files.write(dirA.resolve("track.mp3"), new byte[1000]);
+            Files.write(dirB.resolve("cover.jpg"), new byte[3000]);
+
+            String commands = String.join("\n",
+                    "2", dirA.toString(),
+                    "2", dirB.toString(),
+                    "6",
+                    "0") + "\n";
+
+            MultimediaCatalog catalog = new MultimediaCatalog(new LocationRepository(locationsFile));
+            ByteArrayInputStream in = new ByteArrayInputStream(commands.getBytes(StandardCharsets.UTF_8));
+            ByteArrayOutputStream outBuffer = new ByteArrayOutputStream();
+            PrintStream out = new PrintStream(outBuffer, true, StandardCharsets.UTF_8);
+
+            new ConsoleMenu(catalog, in, out).run();
+
+            String output = outBuffer.toString(StandardCharsets.UTF_8);
+            assertTrue(output.contains("[Summary Totals]"), "Displays summary totals section");
+            assertTrue(output.contains("Monitored Directories: 2"), "Displays directory count");
+            assertTrue(output.contains("Total Multimedia Files: 2"), "Displays total file count");
+            assertTrue(output.contains("Total Size: 3.91 KB (4000 bytes)"), "Displays formatted total bytes");
+            assertTrue(output.contains("[1D Extension Statistics]"), "Displays 1D primitive array statistics");
+            assertTrue(output.contains(".mp3 -> Count: 1 | Bytes: 1000"), "Displays .mp3 1D entry");
+            assertTrue(output.contains(".jpg -> Count: 1 | Bytes: 3000"), "Displays .jpg 1D entry");
+            assertTrue(output.contains("[2D Directory-by-Extension Matrix]"), "Displays 2D primitive matrix");
+            assertTrue(output.contains(dirA.toAbsolutePath().normalize() + " | 1 | 0 | 0 | 0"),
+                    "Displays dirA row in 2D matrix");
+            assertTrue(output.contains(dirB.toAbsolutePath().normalize() + " | 0 | 0 | 1 | 0"),
+                    "Displays dirB row in 2D matrix");
+            assertTrue(output.contains("Exported text report and saved binary catalog snapshot."),
+                    "Confirms report and binary snapshot export");
+            assertTrue(Files.exists(reportFile), "Option 6 creates multimedia-report.txt");
+            assertTrue(Files.exists(binaryFile), "Option 6 creates catalog.bin");
+        } catch (IOException ex) {
+            throw new RuntimeException(ex);
+        } finally {
+            deleteRecursively(tempRoot);
+        }
+    }
+
+    private static void consoleMenu_handlesInvalidMenuOptionsPathsAndFiltersWithErrorMessagesWithoutCrashing() {
+        Path tempRoot = null;
+        try {
+            tempRoot = Files.createTempDirectory("multimedia-test-t33-");
+            Path locationsFile = tempRoot.resolve("locations.txt");
+            Path validDir = Files.createDirectory(tempRoot.resolve("valid"));
+            Path missingDir = tempRoot.resolve("missing");
+
+            String commands = String.join("\n",
+                    "abc",
+                    "99",
+                    "-1",
+                    "2", "   ",
+                    "2", missingDir.toString(),
+                    "2", validDir.toString(),
+                    "2", validDir.toString(),
+                    "3", "9",
+                    "3", "0",
+                    "3", missingDir.toString(),
+                    "5", "abc",
+                    "5", "9",
+                    "5", "1", "VIDEO",
+                    "5", "2", ".mp4",
+                    "5", "3", "   ",
+                    "0") + "\n";
+
+            MultimediaCatalog catalog = new MultimediaCatalog(new LocationRepository(locationsFile));
+            ByteArrayInputStream in = new ByteArrayInputStream(commands.getBytes(StandardCharsets.UTF_8));
+            ByteArrayOutputStream outBuffer = new ByteArrayOutputStream();
+            PrintStream out = new PrintStream(outBuffer, true, StandardCharsets.UTF_8);
+
+            new ConsoleMenu(catalog, in, out).run();
+
+            String output = outBuffer.toString(StandardCharsets.UTF_8);
+            assertTrue(output.contains("[ERROR] Invalid menu input: 'abc'"), "Handles non-numeric menu input");
+            assertTrue(output.contains("[ERROR] Invalid menu option: 99"), "Handles out-of-range menu option 99");
+            assertTrue(output.contains("[ERROR] Invalid menu option: -1"), "Handles negative menu option -1");
+            assertTrue(output.contains("[ERROR] Directory path must not be null or blank."), "Handles blank directory add");
+            assertTrue(output.contains("[ERROR] Directory does not exist:"), "Handles missing directory add");
+            assertTrue(output.contains("[ERROR] Directory is already monitored:"), "Handles duplicate directory add");
+            assertTrue(output.contains("[ERROR] Directory index out of range: 9"), "Handles out-of-range remove index 9");
+            assertTrue(output.contains("[ERROR] Directory index out of range: 0"), "Handles out-of-range remove index 0");
+            assertTrue(output.contains("[ERROR] Directory is not in the monitored list:"), "Handles unmonitored remove path");
+            assertTrue(output.contains("[ERROR] Invalid filter option: 'abc'"), "Handles non-numeric filter option");
+            assertTrue(output.contains("[ERROR] Invalid filter option: 9"), "Handles out-of-range filter option");
+            assertTrue(output.contains("[ERROR] Unsupported media type: 'VIDEO'"), "Handles invalid MediaType filter");
+            assertTrue(output.contains("[ERROR] Unsupported multimedia extension: .mp4"), "Handles invalid extension filter");
+            assertTrue(output.contains("[ERROR] Search query must not be null or blank."), "Handles blank search query");
+            assertTrue(!output.contains("Exception"), "No raw Java exception class names or stack traces printed");
+            assertTrue(output.contains("State saved."), "Recovers from all errors and exits cleanly");
+        } catch (IOException ex) {
+            throw new RuntimeException(ex);
+        } finally {
+            deleteRecursively(tempRoot);
+        }
+    }
+
+    private static void consoleMenu_andMainRejectNullConstructorAndRunArguments() {
+        Path tempRoot = null;
+        try {
+            tempRoot = Files.createTempDirectory("multimedia-test-t34-");
+            Path locationsFile = tempRoot.resolve("locations.txt");
+            MultimediaCatalog catalog = new MultimediaCatalog(new LocationRepository(locationsFile));
+            ByteArrayInputStream in = new ByteArrayInputStream(new byte[0]);
+            PrintStream out = new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8);
+
+            assertThrows(IllegalArgumentException.class,
+                    () -> new ConsoleMenu(null, in, out),
+                    "ConsoleMenu rejects null catalog");
+            assertThrows(IllegalArgumentException.class,
+                    () -> new ConsoleMenu(catalog, null, out),
+                    "ConsoleMenu rejects null InputStream");
+            assertThrows(IllegalArgumentException.class,
+                    () -> new ConsoleMenu(catalog, in, null),
+                    "ConsoleMenu rejects null PrintStream");
+            assertThrows(IllegalArgumentException.class,
+                    () -> Main.run(null, in, out),
+                    "Main.run rejects null locationsFile");
+            assertThrows(IllegalArgumentException.class,
+                    () -> Main.run(locationsFile, null, out),
+                    "Main.run rejects null InputStream");
+            assertThrows(IllegalArgumentException.class,
+                    () -> Main.run(locationsFile, in, null),
+                    "Main.run rejects null PrintStream");
         } catch (IOException ex) {
             throw new RuntimeException(ex);
         } finally {
