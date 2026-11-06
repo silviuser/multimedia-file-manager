@@ -27,19 +27,20 @@ A console-based Java 21 application (`ro.ase.multimedia`) for monitoring directo
 
 | Component | Location | Responsibility |
 | --- | --- | --- |
-| `MediaType` | `src/main/java/ro/ase/multimedia/model/MediaType.java` | Enum (`AUDIO`, `IMAGE`) mapping supported extensions (`.mp3`, `.wav`, `.jpg`, `.png`) |
-| `DirectoryStatus` | `src/main/java/ro/ase/multimedia/model/DirectoryStatus.java` | Enum (`ACCESSIBLE`, `MISSING`, `INACCESSIBLE`) representing the disk state of a monitored location |
-| `MonitoredDirectory` | `src/main/java/ro/ase/multimedia/model/MonitoredDirectory.java` | Domain class for a monitored directory path, status, and last-scanned metadata |
-| `MultimediaFile` | `src/main/java/ro/ase/multimedia/model/MultimediaFile.java` | Domain class for a discovered media file (name, extension, `MediaType`, size in bytes, parent directory path) |
-| Custom Exceptions | `src/main/java/ro/ase/multimedia/exception/*.java` | `MultimediaException`, `InvalidDirectoryException`, `DuplicateLocationException`, `LocationNotFoundException`, `StorageOperationException` |
-| `LocationRepository` | `src/main/java/ro/ase/multimedia/storage/LocationRepository.java` | Reads and atomically writes monitored directory paths in `locations.txt` |
-| `BinaryCatalogStorage` | `src/main/java/ro/ase/multimedia/storage/BinaryCatalogStorage.java` | Saves and restores binary catalog/statistics snapshots (`catalog.bin`) using `DataOutputStream` / `DataInputStream` |
-| `ReportExporter` | `src/main/java/ro/ase/multimedia/storage/ReportExporter.java` | Writes formatted text statistics and inventory reports (`multimedia-report.txt`) |
-| `MultimediaScanner` | `src/main/java/ro/ase/multimedia/service/MultimediaScanner.java` | Walks accessible monitored directories and builds `MultimediaFile` instances for supported extensions |
-| `StatisticsCalculator` | `src/main/java/ro/ase/multimedia/service/StatisticsCalculator.java` | Populates 1D (`int[]`, `long[]`) and 2D (`long[][]`) primitive arrays from the in-memory collections |
-| `MultimediaCatalog` | `src/main/java/ro/ase/multimedia/service/MultimediaCatalog.java` | Coordinates in-memory collections (`List<MonitoredDirectory>`, `List<MultimediaFile>`, `Map<MediaType, List<MultimediaFile>>`), primitive arrays, filtering, and persistence |
-| `ConsoleMenu` | `src/main/java/ro/ase/multimedia/ui/ConsoleMenu.java` | Interactive CLI menu loop, input parsing, tabular display, and error presentation |
-| `Main` | `src/main/java/ro/ase/multimedia/Main.java` | Application entry point: wires dependencies, loads initial state, starts menu, saves on exit |
+| `MediaType` | `project_ppoo/src/main/java/ro/ase/multimedia/model/MediaType.java` | Enum (`AUDIO`, `IMAGE`) mapping supported extensions (`.mp3`, `.wav`, `.jpg`, `.png`) (`project-foundation`) |
+| `DirectoryStatus` | `project_ppoo/src/main/java/ro/ase/multimedia/model/DirectoryStatus.java` | Enum (`ACCESSIBLE`, `MISSING`, `INACCESSIBLE`) representing the disk state of a monitored location (`project-foundation`) |
+| `MonitoredDirectory` | `project_ppoo/src/main/java/ro/ase/multimedia/model/MonitoredDirectory.java` | Immutable domain class for a normalized monitored directory `Path`, status, and `addedAt` metadata (`project-foundation`) |
+| `MultimediaFile` | `project_ppoo/src/main/java/ro/ase/multimedia/model/MultimediaFile.java` | Immutable domain class for a discovered media file (name, extension, `MediaType`, size in bytes, parent and full `Path`) (`project-foundation`) |
+| Custom Exceptions | `project_ppoo/src/main/java/ro/ase/multimedia/exception/*.java` | Unchecked `MultimediaException`, `InvalidDirectoryException`, `DuplicateLocationException`, `LocationNotFoundException`, `StorageOperationException` (`project-foundation`) |
+| `LocationRepository` | `project_ppoo/src/main/java/ro/ase/multimedia/storage/LocationRepository.java` | Reads and atomically writes monitored directory paths in `locations.txt` |
+| `BinaryCatalogStorage` | `project_ppoo/src/main/java/ro/ase/multimedia/storage/BinaryCatalogStorage.java` | Saves and restores binary catalog/statistics snapshots (`catalog.bin`) using `DataOutputStream` / `DataInputStream` |
+| `ReportExporter` | `project_ppoo/src/main/java/ro/ase/multimedia/storage/ReportExporter.java` | Writes formatted text statistics and inventory reports (`multimedia-report.txt`) |
+| `MultimediaScanner` | `project_ppoo/src/main/java/ro/ase/multimedia/service/MultimediaScanner.java` | Walks accessible monitored directories and builds `MultimediaFile` instances for supported extensions |
+| `StatisticsCalculator` | `project_ppoo/src/main/java/ro/ase/multimedia/service/StatisticsCalculator.java` | Populates 1D (`int[]`, `long[]`) and 2D (`long[][]`) primitive arrays from the in-memory collections |
+| `MultimediaCatalog` | `project_ppoo/src/main/java/ro/ase/multimedia/service/MultimediaCatalog.java` | Coordinates in-memory collections (`List<MonitoredDirectory>`, `List<MultimediaFile>`, `Map<MediaType, List<MultimediaFile>>`), primitive arrays, filtering, and persistence |
+| `ConsoleMenu` | `project_ppoo/src/main/java/ro/ase/multimedia/ui/ConsoleMenu.java` | Interactive CLI menu loop, input parsing, tabular display, and error presentation |
+| `Main` | `project_ppoo/src/main/java/ro/ase/multimedia/Main.java` | Application entry point: wires dependencies, loads initial state, starts menu, saves on exit (`project-foundation`) |
+| `TestRunner` | `project_ppoo/src/test/java/ro/ase/multimedia/TestRunner.java` | Self-contained zero-dependency automated unit test harness (`project-foundation`) |
 
 ## Data model
 
@@ -74,3 +75,5 @@ A console-based Java 21 application (`ro.ase.multimedia`) for monitoring directo
 | D3 | Strictly read-only access to monitored media directories | Guarantees that removing a location or running the app never deletes or alters user files on disk (`VAL-5`, `S3`) | before the first task |
 | D4 | Use both text (`locations.txt`, `multimedia-report.txt`) and binary (`catalog.bin`) files | Directly fulfills `G1` (text and binary files for data save/restore and statistics/reports) | before the first task |
 | D5 | Inject `InputStream` and `PrintStream` into `ConsoleMenu` and file `Path`s into repositories | Allows fast, deterministic automated tests using temporary directories and in-memory streams (`TEST-2`, `TEST-4`) | before the first task |
+| D6 | Standard JDK 21 CLI tools (`javac`, `java`, `javadoc`) via `./scripts/*.sh` targeting `project_ppoo/` with a self-contained `TestRunner` | Works offline across Linux, WSL, and Windows JDK 21 installations with zero external build or test dependencies (`JAVA-1`, `TEST-1`) | `project-foundation` |
+| D7 | Unchecked `MultimediaException extends RuntimeException` as base for domain exceptions | Keeps method and stream signatures clean (`JAVA-6`, `JAVA-7`) while preserving `@throws` JavaDoc and centralized handling in `ConsoleMenu` (`VAL-1`, `CLI-5`) | `project-foundation` |

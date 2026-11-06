@@ -2,13 +2,16 @@
 
 A Java 21 console application for monitoring multiple directories on disk and cataloging, filtering, and reporting on multimedia files (audio `.mp3`, `.wav` and images `.jpg`, `.png`). Monitored directory paths are persisted in `locations.txt`, all working data is managed in memory inside collections of custom domain objects (`List<MonitoredDirectory>`, `List<MultimediaFile>`, `Map<MediaType, List<MultimediaFile>>`) and 1D/2D primitive arrays (`int[]`, `long[]`, `long[][]`), and statistics/snapshots are saved to text (`reports/multimedia-report.txt`) and binary (`data/catalog.bin`) files.
 
-Status: no code yet. The planned increments are listed in [`docs/ROADMAP.md`](docs/ROADMAP.md) and the design is documented in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+Status: `project-foundation` complete (build/lint/test/run toolchain, domain model, and exception hierarchy). The roadmap is in [`docs/ROADMAP.md`](docs/ROADMAP.md) and the design is documented in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Features
 
 | Feature | Interface | Since |
 | --- | --- | --- |
-| None yet | | |
+| Cross-platform Java 21 build, lint (`-Xlint:all -Werror` + `javadoc`), test, and run scripts | `./scripts/{build,lint,test,run}.sh` | `project-foundation` |
+| Validated immutable domain models (`MediaType`, `DirectoryStatus`, `MonitoredDirectory`, `MultimediaFile`) | `ro.ase.multimedia.model` | `project-foundation` |
+| Unchecked domain exception hierarchy (`MultimediaException`, `InvalidDirectoryException`, `DuplicateLocationException`, `LocationNotFoundException`, `StorageOperationException`) | `ro.ase.multimedia.exception` | `project-foundation` |
+| Application entry point and zero-dependency automated unit test suite | `ro.ase.multimedia.Main`, `ro.ase.multimedia.TestRunner` | `project-foundation` |
 
 ## Requirements
 
@@ -26,13 +29,13 @@ Status: no code yet. The planned increments are listed in [`docs/ROADMAP.md`](do
 
 ## Build, Run and Test
 
-Created by the first roadmap increment (`project-foundation`):
+Sources reside in `project_ppoo/src/main/java` and `project_ppoo/src/test/java` and compile into `project_ppoo/out/{main,test}`:
 
 ```bash
 ./scripts/build.sh   # compile main and test sources
-./scripts/lint.sh    # javac -Xlint:all -Werror and javadoc check
-./scripts/test.sh    # run automated test suite
-./scripts/run.sh     # start the interactive console menu
+./scripts/lint.sh    # javac -Xlint:all -Werror and javadoc -Xdoclint:all -Werror check
+./scripts/test.sh    # run automated test suite (ro.ase.multimedia.TestRunner)
+./scripts/run.sh     # start the console application (ro.ase.multimedia.Main)
 ```
 
 ## Development workflow
