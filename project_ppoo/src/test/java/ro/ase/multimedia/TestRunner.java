@@ -6,6 +6,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Stream;
 import ro.ase.multimedia.exception.DuplicateLocationException;
@@ -18,6 +19,7 @@ import ro.ase.multimedia.model.MediaType;
 import ro.ase.multimedia.model.MonitoredDirectory;
 import ro.ase.multimedia.model.MultimediaFile;
 import ro.ase.multimedia.service.MultimediaCatalog;
+import ro.ase.multimedia.service.MultimediaScanner;
 import ro.ase.multimedia.storage.LocationRepository;
 
 /**
@@ -69,6 +71,16 @@ public final class TestRunner {
                 TestRunner::catalog_removeDirectoryRejectsUnmonitoredOrBlankPath);
         runTest("T16 catalog_saveAllOnExitRefreshesStatusesAndFlushesCurrentListToDisk",
                 TestRunner::catalog_saveAllOnExitRefreshesStatusesAndFlushesCurrentListToDisk);
+        runTest("T17 scanner_recursivelyFindsSupportedFilesSortedAndIgnoresUnsupportedOrMissing",
+                TestRunner::scanner_recursivelyFindsSupportedFilesSortedAndIgnoresUnsupportedOrMissing);
+        runTest("T18 catalog_scansAccessibleDirectoriesDeduplicatesOverlapsAndUpdatesOnAddRemoveRescan",
+                TestRunner::catalog_scansAccessibleDirectoriesDeduplicatesOverlapsAndUpdatesOnAddRemoveRescan);
+        runTest("T19 catalog_filterByMediaTypeReturnsMatchingAudioAndImageFilesAndRejectsNull",
+                TestRunner::catalog_filterByMediaTypeReturnsMatchingAudioAndImageFilesAndRejectsNull);
+        runTest("T20 catalog_filterByExtensionMatchesCaseInsensitivelyWithOrWithoutDotAndRejectsInvalid",
+                TestRunner::catalog_filterByExtensionMatchesCaseInsensitivelyWithOrWithoutDotAndRejectsInvalid);
+        runTest("T21 catalog_searchByNameFindsCaseInsensitiveSubstringMatchesAndRejectsBlankQuery",
+                TestRunner::catalog_searchByNameFindsCaseInsensitiveSubstringMatchesAndRejectsBlankQuery);
 
         System.out.printf("Tests complete: %d passed, %d failed.%n", passed, failed);
         if (failed > 0) {
@@ -499,6 +511,205 @@ public final class TestRunner {
             assertEquals(2, savedLines.size(), "saveAllOnExit flushes authoritative in-memory list to locations.txt");
             assertEquals(dirOne.toAbsolutePath().normalize().toString(), savedLines.get(0), "First saved path");
             assertEquals(dirTwo.toAbsolutePath().normalize().toString(), savedLines.get(1), "Second saved path");
+        } catch (IOException ex) {
+            throw new RuntimeException(ex);
+        } finally {
+            deleteRecursively(tempRoot);
+        }
+    }
+
+    private static void scanner_recursivelyFindsSupportedFilesSortedAndIgnoresUnsupportedOrMissing() {
+        Path tempRoot = null;
+        try {
+            tempRoot = Files.createTempDirectory("multimedia-test-t17-");
+            Path rootDir = Files.createDirectory(tempRoot.resolve("media"));
+            Path subDir = Files.createDirectories(rootDir.resolve("albums").resolve("2026"));
+
+            Path fileMp3 = Files.writeString(rootDir.resolve("z-song.MP3"), "12345", StandardCharsets.UTF_8);
+            Path fileWav = Files.writeString(subDir.resolve("a-sound.wav"), "123", StandardCharsets.UTF_8);
+            Path fileJpg = Files.writeString(subDir.resolve("b.archive.JpG"), "1234567", StandardCharsets.UTF_8);
+            Path filePng = Files.writeString(rootDir.resolve("c-cover.png"), "", StandardCharsets.UTF_8);
+
+            Files.writeString(rootDir.resolve("notes.txt"), "ignored", StandardCharsets.UTF_8);
+            Files.writeString(subDir.resolve(".hidden"), "ignored", StandardCharsets.UTF_8);
+            Files.createDirectory(rootDir.resolve("folder.mp3"));
+
+            MultimediaScanner scanner = new MultimediaScanner();
+            MultimediaScanner.ScanResult result = scanner.scanDirectory(rootDir);
+
+            assertEquals(0, result.warnings().size(), "No warnings on accessible tree");
+            assertEquals(4, result.files().size(), "Four supported regular files discovered");
+
+            List<Path> expectedSortedPaths = Stream.of(fileMp3, fileWav, fileJpg, filePng)
+                    .map(p -> p.toAbsolutePath().normalize())
+                    .sorted()
+                    .toList();
+            List<Path> actualPaths = result.files().stream()
+                    .map(MultimediaFile::getFullPath)
+                    .toList();
+            assertEquals(expectedSortedPaths, actualPaths, "Discovered files sorted deterministically by fullPath");
+
+            MultimediaFile wavEntry = result.files().stream()
+                    .filter(f -> f.getName().equals("a-sound.wav"))
+                    .findFirst()
+                    .orElseThrow();
+            assertEquals(".wav", wavEntry.getExtension(), "Normalized .wav extension");
+            assertEquals(MediaType.AUDIO, wavEntry.getMediaType(), "Classified as AUDIO");
+            assertEquals(3L, wavEntry.getSizeBytes(), "Recorded byte size");
+            assertEquals(rootDir.toAbsolutePath().normalize(), wavEntry.getDirectoryPath(), "Root directoryPath recorded");
+
+            MultimediaScanner.ScanResult missingResult = scanner.scanDirectory(tempRoot.resolve("non-existent"));
+            assertEquals(0, missingResult.files().size(), "Missing directory returns empty file list");
+            assertEquals(1, missingResult.warnings().size(), "Missing directory records warning without throwing");
+
+            assertThrows(IllegalArgumentException.class,
+                    () -> scanner.scanDirectory(null),
+                    "Null path rejected with IllegalArgumentException");
+        } catch (IOException ex) {
+            throw new RuntimeException(ex);
+        } finally {
+            deleteRecursively(tempRoot);
+        }
+    }
+
+    private static void catalog_scansAccessibleDirectoriesDeduplicatesOverlapsAndUpdatesOnAddRemoveRescan() {
+        Path tempRoot = null;
+        try {
+            tempRoot = Files.createTempDirectory("multimedia-test-t18-");
+            Path locationsFile = tempRoot.resolve("locations.txt");
+            Path parentDir = Files.createDirectory(tempRoot.resolve("parent"));
+            Path childDir = Files.createDirectory(parentDir.resolve("child"));
+            Path secondDir = Files.createDirectory(tempRoot.resolve("second"));
+
+            Files.writeString(parentDir.resolve("root-track.mp3"), "mp3-data", StandardCharsets.UTF_8);
+            Files.writeString(childDir.resolve("nested-photo.jpg"), "jpg-data", StandardCharsets.UTF_8);
+            Files.writeString(secondDir.resolve("alert.wav"), "wav-data", StandardCharsets.UTF_8);
+
+            Files.write(locationsFile, List.of(parentDir.toString(), childDir.toString()), StandardCharsets.UTF_8);
+
+            MultimediaCatalog catalog = new MultimediaCatalog(new LocationRepository(locationsFile));
+            catalog.initialize();
+
+            assertEquals(2, catalog.getMultimediaFiles().size(),
+                    "Overlapping parent/child directories deduplicate shared files by fullPath");
+            Map<MediaType, List<MultimediaFile>> byType = catalog.getFilesByMediaType();
+            assertEquals(1, byType.get(MediaType.AUDIO).size(), "1 AUDIO file after initial scan");
+            assertEquals(1, byType.get(MediaType.IMAGE).size(), "1 IMAGE file after initial scan");
+
+            catalog.addDirectory(secondDir.toString());
+            assertEquals(3, catalog.getMultimediaFiles().size(), "addDirectory triggers scan and adds new files");
+            assertEquals(2, catalog.getFilesByMediaType().get(MediaType.AUDIO).size(), "2 AUDIO files after adding secondDir");
+
+            Files.writeString(secondDir.resolve("banner.png"), "png-data", StandardCharsets.UTF_8);
+            catalog.rescan();
+            assertEquals(4, catalog.getMultimediaFiles().size(), "rescan discovers newly created file on disk");
+            assertEquals(2, catalog.getFilesByMediaType().get(MediaType.IMAGE).size(), "2 IMAGE files after rescan");
+
+            catalog.removeDirectory(secondDir.toString());
+            assertEquals(2, catalog.getMultimediaFiles().size(), "removeDirectory refreshes cataloged files");
+            assertTrue(Files.exists(secondDir.resolve("banner.png")), "Removed directory files remain intact on disk");
+        } catch (IOException ex) {
+            throw new RuntimeException(ex);
+        } finally {
+            deleteRecursively(tempRoot);
+        }
+    }
+
+    private static void catalog_filterByMediaTypeReturnsMatchingAudioAndImageFilesAndRejectsNull() {
+        Path tempRoot = null;
+        try {
+            tempRoot = Files.createTempDirectory("multimedia-test-t19-");
+            Path locationsFile = tempRoot.resolve("locations.txt");
+            Path mediaDir = Files.createDirectory(tempRoot.resolve("library"));
+
+            Files.writeString(mediaDir.resolve("one.mp3"), "a", StandardCharsets.UTF_8);
+            Files.writeString(mediaDir.resolve("two.wav"), "b", StandardCharsets.UTF_8);
+            Files.writeString(mediaDir.resolve("three.jpg"), "c", StandardCharsets.UTF_8);
+
+            MultimediaCatalog catalog = new MultimediaCatalog(new LocationRepository(locationsFile));
+            catalog.initialize();
+            catalog.addDirectory(mediaDir.toString());
+
+            List<MultimediaFile> audioFiles = catalog.filterByMediaType(MediaType.AUDIO);
+            List<MultimediaFile> imageFiles = catalog.filterByMediaType(MediaType.IMAGE);
+
+            assertEquals(2, audioFiles.size(), "Two AUDIO files returned");
+            assertEquals(1, imageFiles.size(), "One IMAGE file returned");
+            assertEquals("three.jpg", imageFiles.get(0).getName(), "IMAGE file is three.jpg");
+
+            assertThrows(IllegalArgumentException.class,
+                    () -> catalog.filterByMediaType(null),
+                    "Null MediaType rejected with IllegalArgumentException");
+        } catch (IOException ex) {
+            throw new RuntimeException(ex);
+        } finally {
+            deleteRecursively(tempRoot);
+        }
+    }
+
+    private static void catalog_filterByExtensionMatchesCaseInsensitivelyWithOrWithoutDotAndRejectsInvalid() {
+        Path tempRoot = null;
+        try {
+            tempRoot = Files.createTempDirectory("multimedia-test-t20-");
+            Path locationsFile = tempRoot.resolve("locations.txt");
+            Path mediaDir = Files.createDirectory(tempRoot.resolve("library"));
+
+            Files.writeString(mediaDir.resolve("song.MP3"), "a", StandardCharsets.UTF_8);
+            Files.writeString(mediaDir.resolve("voice.wav"), "b", StandardCharsets.UTF_8);
+            Files.writeString(mediaDir.resolve("photo.JPG"), "c", StandardCharsets.UTF_8);
+            Files.writeString(mediaDir.resolve("icon.png"), "d", StandardCharsets.UTF_8);
+
+            MultimediaCatalog catalog = new MultimediaCatalog(new LocationRepository(locationsFile));
+            catalog.initialize();
+            catalog.addDirectory(mediaDir.toString());
+
+            assertEquals(1, catalog.filterByExtension("MP3").size(), "Filter by 'MP3' without dot");
+            assertEquals("song.MP3", catalog.filterByExtension("MP3").get(0).getName(), "Matched song.MP3");
+            assertEquals(1, catalog.filterByExtension(" .wav ").size(), "Filter by ' .wav ' with dot and spaces");
+            assertEquals(1, catalog.filterByExtension(".JPG").size(), "Filter by '.JPG'");
+            assertEquals(1, catalog.filterByExtension("png").size(), "Filter by 'png'");
+
+            assertThrows(IllegalArgumentException.class,
+                    () -> catalog.filterByExtension(null),
+                    "Null extension rejected");
+            assertThrows(IllegalArgumentException.class,
+                    () -> catalog.filterByExtension("   "),
+                    "Blank extension rejected");
+            assertThrows(IllegalArgumentException.class,
+                    () -> catalog.filterByExtension(".mp4"),
+                    "Unsupported extension rejected");
+        } catch (IOException ex) {
+            throw new RuntimeException(ex);
+        } finally {
+            deleteRecursively(tempRoot);
+        }
+    }
+
+    private static void catalog_searchByNameFindsCaseInsensitiveSubstringMatchesAndRejectsBlankQuery() {
+        Path tempRoot = null;
+        try {
+            tempRoot = Files.createTempDirectory("multimedia-test-t21-");
+            Path locationsFile = tempRoot.resolve("locations.txt");
+            Path mediaDir = Files.createDirectory(tempRoot.resolve("library"));
+
+            Files.writeString(mediaDir.resolve("Summer_Vacation_01.jpg"), "a", StandardCharsets.UTF_8);
+            Files.writeString(mediaDir.resolve("summer_hits.mp3"), "b", StandardCharsets.UTF_8);
+            Files.writeString(mediaDir.resolve("winter_notes.wav"), "c", StandardCharsets.UTF_8);
+
+            MultimediaCatalog catalog = new MultimediaCatalog(new LocationRepository(locationsFile));
+            catalog.initialize();
+            catalog.addDirectory(mediaDir.toString());
+
+            List<MultimediaFile> summerMatches = catalog.searchByName("  SuMmEr ");
+            assertEquals(2, summerMatches.size(), "Case-insensitive substring match finds 2 files");
+            assertEquals(0, catalog.searchByName("autumn").size(), "Non-matching query returns empty list");
+
+            assertThrows(IllegalArgumentException.class,
+                    () -> catalog.searchByName(null),
+                    "Null search query rejected");
+            assertThrows(IllegalArgumentException.class,
+                    () -> catalog.searchByName("   "),
+                    "Blank search query rejected");
         } catch (IOException ex) {
             throw new RuntimeException(ex);
         } finally {
