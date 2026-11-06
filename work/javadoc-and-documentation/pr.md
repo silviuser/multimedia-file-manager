@@ -4,7 +4,7 @@ artifact: pr
 branch: javadoc-and-documentation
 base: main
 updated_commit: none
-pr: not created
+pr: https://github.com/silviuser/multimedia-file-manager/pull/6
 ---
 
 # docs(javadoc): complete package JavaDoc, manual verification guide, and Tema 4 project documentation
