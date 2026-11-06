@@ -2,13 +2,13 @@
 
 A Java 21 console application for monitoring multiple directories on disk and cataloging, filtering, and reporting on multimedia files (audio `.mp3`, `.wav` and images `.jpg`, `.png`). Monitored directory paths are persisted in `locations.txt`, all working data is managed in memory inside collections of custom domain objects (`List<MonitoredDirectory>`, `List<MultimediaFile>`, `Map<MediaType, List<MultimediaFile>>`) and 1D/2D primitive arrays (`int[]`, `long[]`, `long[][]`), and statistics/snapshots are saved to text (`reports/multimedia-report.txt`) and binary (`data/catalog.bin`) files.
 
-Status: `project-foundation`, `location-management`, `multimedia-scanner-filter`, `statistics-and-reports`, and `console-menu-app` complete (build/lint/test/run toolchain, domain model, exception hierarchy, `locations.txt` persistence, in-memory monitored directory catalog, recursive multimedia scanner, catalog file filtering/searching, 1D/2D primitive array statistics calculator, UTF-8 text report exporter, binary catalog snapshot storage, and interactive console menu lifecycle). The roadmap is in [`docs/ROADMAP.md`](docs/ROADMAP.md) and the design is documented in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+Status: all 6 roadmap increments complete (`project-foundation`, `location-management`, `multimedia-scanner-filter`, `statistics-and-reports`, `console-menu-app`, and `javadoc-and-documentation`: build/lint/test/run/javadoc toolchain, domain model, exception hierarchy, `locations.txt` persistence, in-memory monitored directory catalog, recursive multimedia scanner, catalog file filtering/searching, 1D/2D primitive array statistics calculator, UTF-8 text report exporter, binary catalog snapshot storage, interactive console menu lifecycle, package- and class-level JavaDoc, repeatable manual console verification, and Romanian academic project documentation in [`docs/PROJECT_DOCUMENTATION.md`](docs/PROJECT_DOCUMENTATION.md)). The roadmap is in [`docs/ROADMAP.md`](docs/ROADMAP.md) and the design is documented in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Features
 
 | Feature | Interface | Since |
 | --- | --- | --- |
-| Cross-platform Java 21 build, lint (`-Xlint:all -Werror` + `javadoc`), test, and run scripts | `./scripts/{build,lint,test,run}.sh` | `project-foundation` |
+| Cross-platform Java 21 build, lint (`-Xlint:all -Werror` + `javadoc`), test, JavaDoc HTML generation, and run scripts | `./scripts/{build,lint,test,javadoc,run}.sh` | `project-foundation`, `javadoc-and-documentation` |
 | Validated immutable domain models (`MediaType`, `DirectoryStatus`, `MonitoredDirectory`, `MultimediaFile`) | `ro.ase.multimedia.model` | `project-foundation` |
 | Unchecked domain exception hierarchy (`MultimediaException`, `InvalidDirectoryException`, `DuplicateLocationException`, `LocationNotFoundException`, `StorageOperationException`) | `ro.ase.multimedia.exception` | `project-foundation` |
 | Application entry point and zero-dependency automated unit test suite | `ro.ase.multimedia.Main`, `ro.ase.multimedia.TestRunner` | `project-foundation` |
@@ -19,6 +19,7 @@ Status: `project-foundation`, `location-management`, `multimedia-scanner-filter`
 | 1D (`int[] countsByExtension`, `long[] bytesByExtension`) and 2D (`long[][] directoryExtensionMatrix`) primitive array statistics calculation with defensive deep copies | `ro.ase.multimedia.service.StatisticsCalculator` | `statistics-and-reports` |
 | Atomic UTF-8 text report export (`reports/multimedia-report.txt`) and binary catalog snapshot save/restore (`data/catalog.bin`) integrated into catalog lifecycle and exit persistence | `ro.ase.multimedia.storage.ReportExporter`, `ro.ase.multimedia.storage.BinaryCatalogStorage`, `ro.ase.multimedia.service.MultimediaCatalog` | `statistics-and-reports` |
 | Interactive console menu (`1`–`6` and `0`/EOF exit) with injectable UTF-8 `InputStream`/`PrintStream`, 1-based index or path directory removal, `MediaType`/extension/keyword sub-menu filtering, 1D/2D statistics display with report/binary export, and full `Main` lifecycle | `ro.ase.multimedia.ui.ConsoleMenu`, `ro.ase.multimedia.Main` | `console-menu-app` |
+| Package-level JavaDoc (`package-info.java` across all 6 packages), HTML JavaDoc generator (`docs/javadoc/`), repeatable manual verification walkthrough, and Romanian course documentation (`Tema 4`) ready for Microsoft Word (`.docx`) export | `ro.ase.multimedia/**/package-info.java`, `./scripts/javadoc.sh`, `docs/PROJECT_DOCUMENTATION.md` | `javadoc-and-documentation` |
 
 ## Requirements
 
