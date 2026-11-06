@@ -22,6 +22,7 @@ import ro.ase.multimedia.service.MultimediaCatalog;
 import ro.ase.multimedia.service.MultimediaScanner;
 import ro.ase.multimedia.service.StatisticsCalculator;
 import ro.ase.multimedia.storage.LocationRepository;
+import ro.ase.multimedia.storage.ReportExporter;
 
 /**
  * Self-contained automated unit test runner for the Multimedia File Manager.
@@ -86,6 +87,10 @@ public final class TestRunner {
                 TestRunner::statisticsCalculator_computes1DAnd2DPrimitiveArraysAndEnforcesDefensiveCopies);
         runTest("T23 statisticsCalculator_handlesEmptyInputsAndRejectsNullArguments",
                 TestRunner::statisticsCalculator_handlesEmptyInputsAndRejectsNullArguments);
+        runTest("T24 reportExporter_writesFormattedUtf8ReportAtomicallyAndCleansUpTempFile",
+                TestRunner::reportExporter_writesFormattedUtf8ReportAtomicallyAndCleansUpTempFile);
+        runTest("T25 reportExporter_throwsStorageOperationExceptionOnWriteFailureAndRejectsNulls",
+                TestRunner::reportExporter_throwsStorageOperationExceptionOnWriteFailureAndRejectsNulls);
 
         System.out.printf("Tests complete: %d passed, %d failed.%n", passed, failed);
         if (failed > 0) {
@@ -793,5 +798,81 @@ public final class TestRunner {
         assertThrows(IllegalArgumentException.class,
                 () -> new StatisticsCalculator.StatisticsSnapshot(new int[2], new long[4], new long[0][4]),
                 "Invalid countsByExtension length rejected");
+    }
+
+    private static void reportExporter_writesFormattedUtf8ReportAtomicallyAndCleansUpTempFile() {
+        Path tempRoot = null;
+        try {
+            tempRoot = Files.createTempDirectory("multimedia-test-t24-");
+            Path reportFile = tempRoot.resolve("reports").resolve("multimedia-report.txt");
+            ReportExporter exporter = new ReportExporter(reportFile);
+
+            assertEquals(reportFile.toAbsolutePath().normalize(), exporter.getReportFile(), "Normalized reportFile");
+
+            Path dirA = tempRoot.resolve("music").toAbsolutePath().normalize();
+            List<MonitoredDirectory> dirs = List.of(
+                    new MonitoredDirectory(dirA, DirectoryStatus.ACCESSIBLE, "2026-11-06T12:00:00Z")
+            );
+            List<MultimediaFile> files = List.of(
+                    new MultimediaFile("song.mp3", ".mp3", MediaType.AUDIO, 2048L, dirA, dirA.resolve("song.mp3")),
+                    new MultimediaFile("cover.png", ".png", MediaType.IMAGE, 1024L, dirA, dirA.resolve("cover.png"))
+            );
+            StatisticsCalculator.StatisticsSnapshot stats = new StatisticsCalculator().calculate(dirs, files);
+
+            exporter.export(dirs, files, stats);
+
+            assertTrue(Files.exists(reportFile), "Report file created");
+            assertTrue(!Files.exists(reportFile.resolveSibling("multimedia-report.txt.tmp")),
+                    "No leftover .tmp file after export");
+
+            String content = Files.readString(reportFile, StandardCharsets.UTF_8);
+            assertTrue(content.contains("=== MULTIMEDIA CATALOG REPORT ==="), "Contains report header");
+            assertTrue(content.contains("Monitored Directories: 1"), "Contains directory total");
+            assertTrue(content.contains("Total Multimedia Files: 2"), "Contains file total");
+            assertTrue(content.contains("Total Size (Bytes): 3072"), "Contains byte total");
+            assertTrue(content.contains(".mp3 -> Count: 1 | Bytes: 2048"), "Contains 1D .mp3 stats");
+            assertTrue(content.contains(".png -> Count: 1 | Bytes: 1024"), "Contains 1D .png stats");
+            assertTrue(content.contains("[2D Directory-by-Extension Matrix]"), "Contains 2D matrix section");
+            assertTrue(content.contains(dirA + " | 1 | 0 | 0 | 1"), "Contains 2D matrix row for dirA");
+            assertTrue(content.contains("song.mp3 | Type: AUDIO | Ext: .mp3 | Size: 2048 bytes"), "Contains file entry");
+        } catch (IOException ex) {
+            throw new RuntimeException(ex);
+        } finally {
+            deleteRecursively(tempRoot);
+        }
+    }
+
+    private static void reportExporter_throwsStorageOperationExceptionOnWriteFailureAndRejectsNulls() {
+        Path tempRoot = null;
+        try {
+            tempRoot = Files.createTempDirectory("multimedia-test-t25-");
+            Path dirAsReport = Files.createDirectory(tempRoot.resolve("dir-as-report"));
+            ReportExporter failingExporter = new ReportExporter(dirAsReport);
+            StatisticsCalculator.StatisticsSnapshot emptyStats =
+                    new StatisticsCalculator().calculate(List.of(), List.of());
+
+            assertThrows(StorageOperationException.class,
+                    () -> failingExporter.export(List.of(), List.of(), emptyStats),
+                    "Exporting over a directory throws StorageOperationException");
+            assertTrue(!Files.exists(dirAsReport.resolveSibling("dir-as-report.tmp")),
+                    "Failed export cleans up temporary sibling file");
+
+            assertThrows(IllegalArgumentException.class,
+                    () -> new ReportExporter(null),
+                    "Null reportFile rejected");
+            assertThrows(IllegalArgumentException.class,
+                    () -> failingExporter.export(null, List.of(), emptyStats),
+                    "Null directories rejected");
+            assertThrows(IllegalArgumentException.class,
+                    () -> failingExporter.export(List.of(), null, emptyStats),
+                    "Null files rejected");
+            assertThrows(IllegalArgumentException.class,
+                    () -> failingExporter.export(List.of(), List.of(), null),
+                    "Null statistics rejected");
+        } catch (IOException ex) {
+            throw new RuntimeException(ex);
+        } finally {
+            deleteRecursively(tempRoot);
+        }
     }
 }
